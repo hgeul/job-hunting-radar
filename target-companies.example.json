@@ -1,0 +1,58 @@
+{
+  "_comment": "이 파일을 target-companies.json 으로 복사한 뒤 실제 감시 대상 기업을 채우세요. (target-companies.json 은 .gitignore 됨) config.json 의 targets.file 이 이 파일을 가리킵니다.",
+  "_scale_comment": "권장 규모: S tier 8~12곳, A tier 15~20곳, B tier 10~20곳. 합계 30~50곳.",
+  "version": 1,
+
+  "_fields_comment": {
+    "id": "필수. 내부 식별자(소문자·하이픈). 한 번 정하면 바꾸지 마세요(상태 추적 키).",
+    "name": "필수. 대표 표기명. 노트·알림에 그대로 보입니다.",
+    "aliases": "선택이지만 사실상 필수. 공고에 뜨는 다른 표기를 전부 넣으세요. 한글명·영문명·법인 표기.",
+    "tier": "S | A | B | C. 점수에 섞지 않고 알림 우선순위에만 씁니다.",
+    "enabled": "false 로 두면 감시하지 않되 'target이었다'는 사실은 유지됩니다.",
+    "sources": "현재는 **선언용**입니다. 어느 소스에서 잡을지 적어두는 칸이고, 지금 매칭은 소스와 무관하게 수집된 모든 공고에서 회사명으로 찾습니다. type 별 실제 분기(공식 채용페이지 직접 수집 포함)는 Phase 4에서 붙습니다. 오타를 즉시 잡으려고 값 검증은 지금부터 합니다(platform | platform_b | official).",
+    "roles.include": "선택. 공고 제목·직무에 이 중 하나라도 있어야 후보로 봅니다. 비우면 직무 제한 없음.",
+    "roles.exclude": "선택. 하나라도 걸리면 제외. include 보다 우선합니다.",
+    "_roles_matching": "직무는 회사명과 달리 부분일치로 봅니다(제목·직무 문자열에 포함되면 매칭). 그래서 'qa'·'ios' 같은 짧은 조각은 studios·portfolios 처럼 엉뚱한 단어에 걸립니다. 'QA 엔지니어'·'iOS 개발'처럼 구체적으로 쓰세요.",
+    "priority": "선택. 같은 tier 안에서의 순서용 숫자.",
+    "notes": "선택. 왜 이 회사를 넣었는지 메모."
+  },
+
+  "_alias_comment": "회사명은 소문자화 → 법인표기((주)·㈜·Inc.·Corp.·Ltd 등) 제거 → 공백·기호 제거 후 '완전일치'로 비교합니다. 부분일치를 하지 않으므로 '예시알파' 와 '예시알파 클라우드' 는 별개 회사로 남습니다. 그래서 계열사는 각각 따로 등록하세요.",
+
+  "companies": [
+    {
+      "id": "example-alpha",
+      "name": "예시알파",
+      "aliases": ["Example Alpha", "예시알파(주)", "Example Alpha Inc."],
+      "tier": "S",
+      "enabled": true,
+      "roles": {
+        "include": ["backend", "백엔드", "서버", "java", "platform"],
+        "exclude": ["frontend", "프론트엔드", "안드로이드", "ios 개발", "qa 엔지니어"]
+      },
+      "sources": [
+        { "type": "platform" },
+        { "type": "official", "url": "https://careers.example-alpha.invalid/" }
+      ],
+      "notes": "예시 항목입니다. 지우고 실제 기업으로 바꾸세요."
+    },
+    {
+      "id": "example-alpha-cloud",
+      "name": "예시알파 클라우드",
+      "aliases": ["Example Alpha Cloud"],
+      "tier": "A",
+      "enabled": true,
+      "sources": [{ "type": "platform" }],
+      "notes": "계열사는 이렇게 별도 id 로 둡니다. 위 example-alpha 와 합쳐지지 않습니다."
+    },
+    {
+      "id": "example-beta",
+      "name": "예시베타",
+      "aliases": ["Example Beta", "주식회사 예시베타"],
+      "tier": "B",
+      "enabled": false,
+      "sources": [{ "type": "platform" }],
+      "notes": "enabled=false 예시. 감시는 안 하지만 목록에서 지우진 않은 상태."
+    }
+  ]
+}
