@@ -62,14 +62,36 @@ flowchart TD
 | ④ LLM 채점 | 이력 ↔ (원본/플랫폼) JD 정밀 대조 | 구독(`claude -p`) 또는 API로 채점. 근거·리스크·**전략** 생성 |
 | ⑤ 출력 | 노트 작성 + 상태 저장 | 문턱↑ 🔥+전략, notified로 재알림 방지 |
 
+## 코드 구조
+
+위 흐름은 `radar/` 패키지에 나뉘어 있다. 실행 엔트리는 리포 루트의 `job_watcher.py`.
+
+| 단계 | 모듈 |
+|---|---|
+| ① 수집 | `radar/sources/` (`base.py` 공통계약 + `platform_a.py`·`platform_b.py` 어댑터), `radar/dedup.py` |
+| ② 규칙 점수 | `radar/scoring.py` |
+| ③ 신규 판정 | `radar/pipeline.py`, `radar/jd.py`, `radar/state.py` |
+| ③-b enrich | `radar/enrich.py` |
+| ④ LLM 채점 | `radar/llm.py` |
+| ⑤ 출력 | `radar/models.py`, `radar/output/`, `radar/notify/`, `radar/cli.py` |
+
+소스를 하나 더 붙일 때 고칠 곳은 `radar/sources/` 안뿐이다. 나머지 단계는 공통 item/detail
+dict(계약은 `radar/sources/base.py` docstring)만 보므로 수정할 필요가 없다.
+
 ## 데이터 상태 (state/{name}.json)
 
 ```
 { "<공고id>": { "first_seen": "날짜", "created_at": "플랫폼 등록시각",
-                "notified": true, "rule": 80.0, "title": "..." } }
+                "notified": true, "rule": 80.0, "title": "...",
+                "card": { "score": 82, "company": "...", "title": "...", "url": "...",
+                          "verdict": "...", "deadline": "...", "one_liner": "...",
+                          "career": "...", "region": "...", "sources": ["..."],
+                          "llm": true, "date": "YYYY-MM-DD" } } }
 ```
 
 - `created_at`: 상세 재조회 안 하려는 캐시. `notified`: 재알림 방지.
+- `card`: 노트에 수록된 공고만 붙는다. HTML 대시보드가 여러 날치를 모아 보여주는 재료.
+- 키는 소스 접두어 없는 **raw 공고 id**다. 바꾸면 기존 `notified` 이력이 끊겨 재알림이 난다.
 - 필터·프로필을 크게 바꾸면 이 파일을 지우고 재실행 = 깨끗한 첫 다이제스트.
 
 ## 왜 이렇게(하이브리드 + createdAt) 설계했나

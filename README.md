@@ -37,14 +37,37 @@
 
 | 파일 | 역할 |
 |---|---|
-| `job_watcher.py` | 본체 (수집·점수·신규판정·enrich·LLM·노트) |
+| `job_watcher.py` | 실행 엔트리. 본체는 `radar/`에 있다 |
+| `radar/` | 코어 패키지 (아래 표 참고) |
+| `tests/` | 유닛 테스트. `python -m unittest discover -s tests -t .` |
 | `.env.example` | 크롤 대상(`PLATFORM_*`)·토큰 템플릿. `.env`로 복사해 사용 (실제 파일은 gitignore) |
 | `config.example.json` | 설정 템플릿. `config.json`으로 복사해 사용 (실제 파일은 gitignore) |
 | `profile.example.md` | 이력 요약 템플릿. `profile.md`로 복사해 사용 |
 | `run.bat` | 스케줄러용 실행 래퍼 (모든 프로필 순차 실행) |
 | `requirements.txt` | 선택 의존성 (`anthropic`, `crawl4ai`) |
 | `matches/{name}/YYYY-MM-DD.md` | (자동생성) 그날의 매칭 다이제스트 |
-| `state/{name}.json` | (자동생성) 본 공고 id·createdAt 캐시·notified 플래그 |
+| `matches/{name}/index.html` | (자동생성) HTML 대시보드 |
+| `state/{name}.json` | (자동생성) 본 공고 id·createdAt 캐시·notified 플래그·대시보드 카드 |
+
+### `radar/` 구성
+
+| 모듈 | 역할 |
+|---|---|
+| `settings.py` | `.env` 로딩과 크롤 대상 바인딩. 경로 기준점(`HERE` = 리포 루트) |
+| `config.py` / `state.py` | 프로필 config·이력 로딩 / 본 공고 상태 저장소 |
+| `sources/` | 소스 어댑터. `base.py`가 공통 계약, `platform_a/b.py`가 구현, `__init__.py`가 레지스트리 |
+| `dedup.py` | 소스 간 중복 병합(회사+제목 완전일치일 때만) |
+| `scoring.py` | 규칙 기반 프리필터 점수 |
+| `jd.py` / `enrich.py` | JD 본문 처리 / 원본 크롤(crawl4ai) |
+| `llm.py` | LLM 엔진 선택·프롬프트·채점 |
+| `models.py` | 매칭 결과 모델·마감일 해석 |
+| `pipeline.py` | 수집→프리필터→신규판정→enrich→채점 오케스트레이션 |
+| `output/` / `notify/` | 마크다운 노트·HTML 대시보드 / 텔레그램 |
+| `cli.py` | 플래그 파싱과 파일 쓰기·알림 |
+
+**새 소스를 붙이는 법**: `radar/sources/`에 `JobSource` 구현을 하나 추가하고 `sources/__init__.py`의
+`REGISTRY`에 한 줄 등록한 뒤, config의 `sources[]`에 `{"type": "<이름>", "enabled": true}`를 넣는다.
+코어 파이프라인은 건드리지 않는다.
 
 ## 빠른 시작
 
@@ -217,7 +240,7 @@ schtasks /Create /TN "job-hunting-radar" /SC DAILY /ST 09:00 ^
 ## 한계·주의
 
 - `createdAt`은 "플랫폼이 그 공고를 처음 수집한 시각"이라 원 사이트 게시일과 며칠 다를 수 있다(신규 알림엔 충분).
-- 플랫폼의 **공개 API 응답 스키마**에 의존한다. 스키마가 바뀌면 `job_watcher.py`의 API 상수·필드명을 손봐야 한다.
+- 플랫폼의 **공개 API 응답 스키마**에 의존한다. 스키마가 바뀌면 해당 소스 어댑터(`radar/sources/platform_a.py`, `radar/sources/platform_b.py`)를 손봐야 한다. 다른 모듈은 건드릴 필요 없다.
 - crawl4ai 크롤은 일부 사이트에서 빈 결과가 올 수 있고, 그때는 폴백 표시(`⚠️`)된다.
 - 알림 채널은 현재 **마크다운 노트 + 텔레그램**. 카카오 등은 추후 추가 가능.
 
