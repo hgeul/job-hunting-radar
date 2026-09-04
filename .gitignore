@@ -6,9 +6,18 @@ config.*.json
 profile.md
 profile.*.md
 !profile.example.md
+# 감시 대상 기업 목록(어느 회사를 노리는지 = 개인정보). 공개는 example 만.
+target-companies.json
+target-companies.*.json
+!target-companies.example.json
 정미/
 resumes/
 matches/
+# AI 하네스·작업 문서. 로컬 전용(지원서·구직 진행상황 등 개인정보 포함).
+# .git/info/exclude 에도 있지만 그건 버전관리·클론 전파가 안 된다. 여기 한 번 더 건다.
+/docs/
+/.claude/
+/CLAUDE.md
 # 런타임 상태 캐시(본 공고 id·createdAt)
 state/
 
@@ -27,3 +36,11 @@ __pycache__/
 Thumbs.db
 .idea/
 .vscode/
+
+# ── Windows/cygwin 크래시 덤프 ──────────────────────────────
+*.stackdump
+
+# ── 리팩터 회귀 baseline(로컬 전용, 크롤 대상 데이터 포함) ──
+# .local/ = 스냅샷 하네스·fixture. _old_*.py = 리팩터 전/후 A/B 비교용 사본.
+.local/
+_old_*.py
