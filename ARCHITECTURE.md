@@ -56,7 +56,7 @@ flowchart TD
 | 단계 | 하는 일 | 핵심 포인트 |
 |---|---|---|
 | ① 수집 | 플랫폼 필터 = API 파라미터로 변환해 유니버스 전체를 긁음 | 사이트에서 건 필터와 **동일 집합**. 소량이라 통째로 수집 |
-| ② 규칙 점수 | 직무/경력/기술/지역/고용형태 가중합 | 값싼 프리필터. 문턱 미달·비대상 컷 |
+| ② 규칙 점수 | 직무/경력/기술/지역/고용형태 가중합 | 값싼 프리필터. 문턱 미달·비대상 컷. **감시 대상 기업 공고는 이 문턱을 건너뛴다** |
 | ③ 신규 판정 | 상세의 `createdAt`이 N일 이내만 | 페이지네이션 불안정 무관. 상세는 **id당 1회** 조회·캐시 |
 | ③-b enrich | 플랫폼 본문 빈약하면 원본을 crawl4ai로 크롤 | 기업 자체페이지 JD 확보. 실패 시 폴백 |
 | ④ LLM 채점 | 이력 ↔ (원본/플랫폼) JD 정밀 대조 | 구독(`claude -p`) 또는 API로 채점. 근거·리스크·**전략** 생성 |
@@ -69,6 +69,7 @@ flowchart TD
 | 단계 | 모듈 |
 |---|---|
 | ① 수집 | `radar/sources/` (`base.py` 공통계약 + `platform_a.py`·`platform_b.py` 어댑터), `radar/dedup.py` |
+| ①-b 감시 대상 판정 | `radar/targeting.py` (회사명 정규화·alias 완전일치·직무 필터) |
 | ② 규칙 점수 | `radar/scoring.py` |
 | ③ 신규 판정 | `radar/pipeline.py`, `radar/jd.py`, `radar/state.py` |
 | ③-b enrich | `radar/enrich.py` |
@@ -77,6 +78,27 @@ flowchart TD
 
 소스를 하나 더 붙일 때 고칠 곳은 `radar/sources/` 안뿐이다. 나머지 단계는 공통 item/detail
 dict(계약은 `radar/sources/base.py` docstring)만 보므로 수정할 필요가 없다.
+
+## 두 개의 레이더
+
+같은 수집·채점·출력 파이프라인을 두 갈래 입구가 공유한다(`radar/pipeline.py`).
+
+```
+수집 (여러 소스)
+   |
+   +-- Discovery: 조건(직무·경력·지역·기술) 기반 규칙 점수 >= rule_threshold
+   |
+   +-- Target:    target-companies.json 의 회사명과 완전일치 + 회사별 직무 필터
+   |              (규칙 점수 문턱을 건너뛴다)
+   |
+   +--> 합집합 (같은 공고를 둘 다 잡으면 1건으로 합쳐 중복 알림 방지)
+          |
+          v
+     신규 판정 -> enrich -> LLM 채점 -> 노트/대시보드/텔레그램
+```
+
+`--mode discovery | target | all`로 입구를 고른다. 기본은 `all`이고,
+감시 대상 기업이 0곳이면 `all`은 `discovery`와 결과가 같다(하위호환).
 
 ## 데이터 상태 (state/{name}.json)
 
@@ -91,6 +113,7 @@ dict(계약은 `radar/sources/base.py` docstring)만 보므로 수정할 필요�
 
 - `created_at`: 상세 재조회 안 하려는 캐시. `notified`: 재알림 방지.
 - `card`: 노트에 수록된 공고만 붙는다. HTML 대시보드가 여러 날치를 모아 보여주는 재료.
+  감시 대상 기업 공고면 `card.target = {id, name, tier}`가 함께 붙는다(없으면 일반 공고).
 - 키는 소스 접두어 없는 **raw 공고 id**다. 바꾸면 기존 `notified` 이력이 끊겨 재알림이 난다.
 - 필터·프로필을 크게 바꾸면 이 파일을 지우고 재실행 = 깨끗한 첫 다이제스트.
 

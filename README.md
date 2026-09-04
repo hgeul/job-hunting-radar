@@ -42,6 +42,7 @@
 | `tests/` | 유닛 테스트. `python -m unittest discover -s tests -t .` |
 | `.env.example` | 크롤 대상(`PLATFORM_*`)·토큰 템플릿. `.env`로 복사해 사용 (실제 파일은 gitignore) |
 | `config.example.json` | 설정 템플릿. `config.json`으로 복사해 사용 (실제 파일은 gitignore) |
+| `target-companies.example.json` | 감시 대상 기업 목록 템플릿. `target-companies.json`으로 복사해 사용 |
 | `profile.example.md` | 이력 요약 템플릿. `profile.md`로 복사해 사용 |
 | `run.bat` | 스케줄러용 실행 래퍼 (모든 프로필 순차 실행) |
 | `requirements.txt` | 선택 의존성 (`anthropic`, `crawl4ai`) |
@@ -58,6 +59,7 @@
 | `sources/` | 소스 어댑터. `base.py`가 공통 계약, `platform_a/b.py`가 구현, `__init__.py`가 레지스트리 |
 | `dedup.py` | 소스 간 중복 병합(회사+제목 완전일치일 때만) |
 | `scoring.py` | 규칙 기반 프리필터 점수 |
+| `targeting.py` | 감시 대상 기업 레지스트리·회사명 정규화·alias 매칭 |
 | `jd.py` / `enrich.py` | JD 본문 처리 / 원본 크롤(crawl4ai) |
 | `llm.py` | LLM 엔진 선택·프롬프트·채점 |
 | `models.py` | 매칭 결과 모델·마감일 해석 |
@@ -109,6 +111,11 @@ python job_watcher.py --no-llm    # 규칙 점수만 (키·구독 없이 테스�
 python job_watcher.py --dry-run   # 저장 안 하고 콘솔 출력만
 python job_watcher.py --seed      # 알림 없이 현재 백로그를 notified 처리
 python job_watcher.py --config config.other.json   # 다른 프로필로 실행
+
+python job_watcher.py --mode discovery   # 조건 기반 전체 탐색만
+python job_watcher.py --mode target      # 감시 대상 기업만
+python job_watcher.py --mode all         # 둘 다 (기본값)
+python job_watcher.py --list-targets     # 감시 대상 기업 목록 확인 후 종료
 ```
 
 **최초 세팅 권장 순서**: ① `--no-llm --dry-run`으로 매칭 확인 → ② (선택) `--seed`를 2~3번
@@ -190,6 +197,64 @@ crawl4ai(로컬 헤드리스 브라우저)로 크롤해 실제 JD를 LLM에 전�
 - 토큰 로딩 우선순위: OS 환경변수 → `.env` 파일(둘 다 있으면 환경변수 우선).
 - 여러 프로필이 서로 다른 사람에게 가야 하면 config마다 `chat_id`를 다르게 준다(봇 토큰은 공용).
 
+## 감시 대상 기업 (Target Radar)
+
+조건으로 훑는 것과 별개로, **내가 지목한 회사 30~50곳**을 따로 감시한다.
+그 회사에서 공고가 나면 규칙 점수 문턱에 못 미쳐도 놓치지 않는다.
+
+```bash
+cp target-companies.example.json target-companies.json
+# 회사를 채운 뒤
+python job_watcher.py --list-targets     # 제대로 읽혔는지 먼저 확인
+```
+
+`config.json`의 `targets.file`이 이 파일을 가리킨다. 파일이 없으면 target 기능만
+꺼지고 기존 탐색은 그대로 돈다(하위호환).
+
+```jsonc
+{
+  "id": "example-alpha",              // 소문자·숫자·하이픈. 한 번 정하면 바꾸지 않는다
+  "name": "예시알파",
+  "aliases": ["Example Alpha", "예시알파(주)"],   // 공고에 뜨는 표기를 전부
+  "tier": "S",                        // S/A/B/C. 점수엔 안 섞고 알림 우선순위에만
+  "enabled": true,
+  "roles": {
+    "include": ["백엔드", "서버", "java"],
+    "exclude": ["프론트엔드", "QA 엔지니어"]
+  },
+  "sources": [{ "type": "platform" }]
+}
+```
+
+### 회사명을 어떻게 맞추나
+
+소문자화 → 법인표기 제거 → 공백·기호 제거 후 **완전일치**로 본다.
+`예시알파`, `Example Alpha`, `㈜예시알파`, `주식회사예시알파`, `Example Alpha Inc.`는 전부 같은 회사다.
+
+부분일치는 **하지 않는다.** `예시알파`와 `예시알파 클라우드`는 별개 회사이기 때문이다.
+계열사는 각각 따로 등록한다.
+
+그래서 alias를 빠뜨리면 조용히 놓칠 수 있다. 이걸 막으려고 실행할 때
+**이름이 비슷한데 매칭 안 된 회사**를 경고로 띄운다. 그 표기를 그대로 `aliases`에 넣으면 된다.
+
+```
+! 감시 대상과 이름이 비슷한데 매칭 안 된 회사 1곳 (alias 누락일 수 있음):
+    "예시알파 테크놀로지" ~ example-alpha
+```
+
+### 감시 대상 공고는 뭐가 다른가
+
+| | Discovery | Target |
+|---|---|---|
+| 규칙 점수 문턱 | 적용 | **건너뜀** |
+| 노트 수록 문턱 | 적용 | **건너뜀** |
+| 텔레그램 문턱 | 적용 | **건너뜀** |
+| 직무 필터 | 전역 제외 키워드 | 회사별 `roles`(없으면 전역 제외 키워드) |
+| 신규·중복 판정 | 적용 | 적용 (target이라도 같은 공고를 매일 알리진 않는다) |
+
+노트·대시보드·텔레그램에서 🎯와 tier로 구분된다.
+같은 공고를 두 레이더가 다 잡아도 알림은 한 번만 간다.
+
 ## 서류 마감일 + HTML 대시보드
 
 **마감일**: 플랫폼 API가 마감일을 주지 않는 경우가 많다(대부분 "상시채용"). 대신 크롤한 원본 JD에서
@@ -235,7 +300,8 @@ schtasks /Create /TN "job-hunting-radar" /SC DAILY /ST 09:00 ^
 | `profile.tech_primary/secondary` | 제목 가점 기술 키워드(소문자) |
 | `scoring.rule_threshold` | 이 규칙점수 미만은 LLM·노트 제외(기본 45) |
 | `scoring.notify_threshold` | 🔥 강조 + 지원·합격 전략 코멘트 문턱(기본 60) |
-| `output.min_score_in_note` | 노트에 실을 최소 점수 |
+| `output.min_score_in_note` | 노트에 실을 최소 점수 (target 공고는 예외) |
+| `targets.enabled` / `targets.file` | 감시 대상 기업 레지스트리 사용 여부·경로 |
 
 ## 한계·주의
 

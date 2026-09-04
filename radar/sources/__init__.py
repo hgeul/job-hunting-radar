@@ -51,7 +51,7 @@ def apply_url(item, detail=None):
 def collect(cfg):
     """활성 소스 전체를 수집·정규화 후 소스 간 중복 병합.
 
-    반환: (items, results) — results는 소스별 SourceResult(공고 0건 vs 수집 실패 구분용).
+    반환: (items, results). results는 소스별 SourceResult(공고 0건 vs 수집 실패 구분용).
     한 소스가 실패해도 나머지 소스는 계속 수집한다.
     """
     items = []

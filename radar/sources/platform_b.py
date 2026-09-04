@@ -69,9 +69,12 @@ class PlatformBSource(JobSource):
                         "careerMax": p.get("maxCareer"),
                         "regions": p.get("locations") or [],
                         "employeeTypes": [],
-                        # 서버단 직무 카테고리로 이미 필터됨 → 역할 점수는 주력으로 취급
+                        # 서버단 직무 카테고리로 이미 필터됨 → 역할 점수는 주력으로 취급.
+                        # 소스가 준 값이 아니라 **우리가 지어낸 값**이다. 직무 필터가
+                        # 이 값을 믿으면 항상 통과하므로 플래그로 표시해 둔다.
                         "depthTwos": list(role_primary),
                         "depthOnes": [],
+                        "_depth_synthetic": True,
                         "_deadline": native_deadline(p),
                     }
                 if res.get("emptyPosition") or not positions:

@@ -102,6 +102,18 @@ render();
 """
 
 
+def _badge(card):
+    """대시보드 공고명 옆 배지. target이면 tier를 앞에 붙인다."""
+    tg = card.get("target")
+    bits = []
+    if tg:
+        bits.append(f"🎯{tg.get('tier', '?')}")
+    sb = source_badge(card.get("sources"))
+    if sb:
+        bits.append(sb)
+    return " ".join(bits)
+
+
 def write_dashboard(cfg, seen):
     """seen의 매칭 카드들을 모아 자체 완결형 HTML 대시보드 생성(외부 의존 0).
 
@@ -138,7 +150,7 @@ def write_dashboard(cfg, seen):
             "company": c.get("company", "?"), "title": c.get("title", "?"),
             "url": c.get("url", "#"), "career": c.get("career", "-"),
             "region": c.get("region", "-"), "one_liner": c.get("one_liner") or "",
-            "src": source_badge(c.get("sources")),
+            "src": _badge(c),
             "date": c.get("date", ""),
         })
     if not rows:

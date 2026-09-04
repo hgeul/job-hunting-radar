@@ -25,19 +25,25 @@ def send_telegram(cfg, matches, stats=None, note_path=None):
         log("  · 텔레그램 skip: 봇 토큰(env) 또는 chat_id 없음")
         return
     threshold = tg.get("threshold", 50)
-    hits = [m for m in matches if m["score"] >= threshold]
+    # target 공고는 점수 문턱을 건너뛴다. 지정한 회사에서 공고가 났다는 사실
+    # 자체가 알릴 가치이고, 직무 필터는 이미 통과한 것들이다.
+    hits = [m for m in matches if m["score"] >= threshold or m.get("target")]
     if not hits:
         log(f"  · 텔레그램 skip: ≥{threshold}점 신규 없음")
         return
-    hits.sort(key=lambda m: m["score"], reverse=True)
+    # target 먼저, 그 다음 점수순.
+    hits.sort(key=lambda m: (0 if m.get("target") else 1, -m["score"]))
     notify = cfg["scoring"]["notify_threshold"]
     person = cfg.get("name", "")
     who = f"{person} · " if person else ""
     window = (stats or {}).get("window")
     span = f" · 최근 {window}일" if window is not None else ""
-    lines = [f"🎯 {who}{PLATFORM_NAME} 매칭 {len(hits)}건 (≥{threshold}점{span})"]
+    n_target = sum(1 for m in hits if m.get("target"))
+    tgt_s = f" · 🎯{n_target}" if n_target else ""
+    lines = [f"🎯 {who}{PLATFORM_NAME} 매칭 {len(hits)}건 (≥{threshold}점{span}{tgt_s})"]
     for m in hits[:8]:
-        flag = "🔥" if m["score"] >= notify else "•"
+        tg = m.get("target")
+        flag = f"🎯{tg['tier']}" if tg else ("🔥" if m["score"] >= notify else "•")
         lines.append(f"{flag} {m['score']}점 · {m['company']} — {m['title']}")
     if len(hits) > 8:
         lines.append(f"…외 {len(hits) - 8}건")

@@ -16,8 +16,11 @@ def write_note(cfg, matches, stats):
     minsc = cfg["output"]["min_score_in_note"]
     notify = cfg["scoring"]["notify_threshold"]
 
-    shown = [m for m in matches if m["score"] >= minsc]
-    shown.sort(key=lambda m: m["score"], reverse=True)
+    # target 공고는 점수 문턱을 건너뛴다(cli의 notified 기준과 반드시 같아야 한다.
+    # 어긋나면 notified 처리됐는데 노트에 안 실려 영영 못 보는 공고가 생긴다).
+    shown = [m for m in matches if m["score"] >= minsc or m.get("target")]
+    # target 우선, 그 다음 점수순.
+    shown.sort(key=lambda m: (0 if m.get("target") else 1, -m["score"]))
 
     lines = []
     person = cfg.get("name", "")
@@ -30,6 +33,12 @@ def write_note(cfg, matches, stats):
     lines.append(f"scanned: {stats['scanned']}")
     lines.append(f"fresh: {stats['fresh']}")
     lines.append(f"matched: {len(shown)}")
+    n_target = sum(1 for m in shown if m.get("target"))
+    if n_target:
+        lines.append(f"targets: {n_target}")
+    # 🎯 열은 target 매칭이 있을 때만 낸다. 감시 대상 기업을 안 쓰는 사람의
+    # 노트가 빈 열 때문에 달라지지 않도록.
+    show_target_col = n_target > 0
     lines.append("tags: [job-hunt]")
     lines.append("---")
     lines.append("")
@@ -47,20 +56,33 @@ def write_note(cfg, matches, stats):
     if stats.get("llm_note"):
         lines.append(f">")
         lines.append(f"> ⚠️ LLM 단계 생략: {stats['llm_note']} (규칙 점수만 표시)")
+    if stats.get("targets_error"):
+        lines.append(f">")
+        lines.append(f"> ⚠️ **감시 대상 기업 목록을 못 읽었습니다**: "
+                     f"{stats['targets_error']}")
+        lines.append(f">")
+        lines.append(f"> 이 다이제스트에는 target 공고가 빠져 있습니다. "
+                     f"`target-companies.json` 을 고친 뒤 다시 실행하세요.")
     lines.append("")
 
     if not shown:
         lines.append("_오늘은 문턱을 넘는 신규 매칭 공고가 없어요._")
     else:
-        lines.append("| 점수 | 판정 | 마감 | 회사 | 공고 | 경력 | 지역 |")
-        lines.append("|---:|:--:|:--:|---|---|:--:|:--:|")
+        if show_target_col:
+            lines.append("| 점수 | 🎯 | 판정 | 마감 | 회사 | 공고 | 경력 | 지역 |")
+            lines.append("|---:|:--:|:--:|:--:|---|---|:--:|:--:|")
+        else:
+            lines.append("| 점수 | 판정 | 마감 | 회사 | 공고 | 경력 | 지역 |")
+            lines.append("|---:|:--:|:--:|---|---|:--:|:--:|")
         for m in shown:
             flag = "🔥" if m["score"] >= notify else ""
             verdict = m.get("verdict") or ("⚙️ LLM 미검증" if m.get("llm") is None else "-")
             dlabel, ddays, dstate = deadline_info(m.get("deadline"))
             dl_cell = f"⏰{dlabel}" if (dstate == "date" and ddays is not None and ddays <= 3) else dlabel
+            tg = m.get("target")
+            tcell = (f"**{tg['tier']}**" if tg else "") + " | " if show_target_col else ""
             lines.append(
-                f"| **{m['score']}**{flag} | {verdict} | {dl_cell} | {m['company']} "
+                f"| **{m['score']}**{flag} | {tcell}{verdict} | {dl_cell} | {m['company']} "
                 f"| [{m['title']}]({m['url']}) | {m['career']} | {m['region']} |"
             )
         lines.append("")
@@ -70,8 +92,12 @@ def write_note(cfg, matches, stats):
             flag = " 🔥" if m["score"] >= notify else ""
             sb = source_badge(m.get("sources"))
             sb = f"  {sb}" if sb else ""
-            lines.append(f"## {m['score']}점{flag} · {m['company']} — {m['title']}{sb}")
+            tg = m.get("target")
+            head = f"🎯 " if tg else ""
+            lines.append(f"## {head}{m['score']}점{flag} · {m['company']} — {m['title']}{sb}")
             lines.append("")
+            if tg:
+                lines.append(f"- 🎯 **감시 대상 기업** · {tg['tier']} tier ({tg['name']})")
             age = m.get("age")
             age_s = f" | 등록 {age}일 전" if age is not None else ""
             src = m.get("jd_source")

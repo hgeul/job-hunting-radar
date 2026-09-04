@@ -15,8 +15,16 @@ from radar import llm as llm_mod
 from radar import sources as sources_mod
 from radar.jd import created_age_days, detail_to_text
 from radar.models import build_match
-from radar.scoring import passes_prefilter
+from radar.scoring import discovery_qualified
+from radar.targeting import EMPTY_REGISTRY
 from radar.util import log
+
+# Radar 모드. 기본은 ALL이지만 target 레지스트리가 비어 있으면 DISCOVERY와 같다
+# (기존 사용자는 target-companies.json 이 없으므로 동작이 그대로다).
+MODE_DISCOVERY = "discovery"
+MODE_TARGET = "target"
+MODE_ALL = "all"
+MODES = (MODE_DISCOVERY, MODE_TARGET, MODE_ALL)
 
 
 class Deps:
@@ -46,11 +54,24 @@ class RunResult:
         self.source_results = source_results
         self.seeded = seeded
 
+    def targets(self):
+        """Target Radar가 잡은 매칭만."""
+        return [m for m in self.matches if m.get("target")]
 
-def run(cfg, seen, profile_text, window, no_llm=False, seed=False, deps=None):
+
+def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
+        mode=MODE_ALL, registry=None, registry_error=None, deps=None):
     """공고 수집부터 매칭 산출까지. 부수효과는 seen dict 갱신뿐이다."""
     # 기본값을 인자 기본값으로 굳히지 않는다(모듈 전역을 갈아끼운 테스트가 먹히도록).
     deps = deps or DEFAULT_DEPS
+    registry = registry if registry is not None else EMPTY_REGISTRY
+    if mode not in MODES:
+        raise ValueError(f"알 수 없는 mode: {mode} (허용: {', '.join(MODES)})")
+    want_discovery = mode in (MODE_DISCOVERY, MODE_ALL)
+    want_target = mode in (MODE_TARGET, MODE_ALL) and len(registry) > 0
+    if mode == MODE_TARGET and len(registry) == 0:
+        log("  ! --mode target 인데 감시 대상 기업이 0곳입니다 "
+            "(config.targets.file 확인). 이번 실행은 아무것도 찾지 못합니다.")
     today = dt.date.today().isoformat()
     max_detail = cfg["search"]["max_detail_fetches"]
 
@@ -61,25 +82,46 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False, deps=None):
     stats = {
         "scanned": len(listings), "rule_pass": 0, "detail_fetched": 0,
         "fresh": 0, "llm_scored": 0, "enriched": 0, "llm_note": None,
-        "window": window,
+        "window": window, "mode": mode,
+        "discovery_candidates": 0, "target_candidates": 0, "target_fresh": 0,
+        "target_near_misses": {}, "targets_error": registry_error,
     }
 
-    # 규칙 프리필터 → 상세조회 후보(점수순)
+    # 두 레이더가 각자 후보를 고르고, 같은 공고를 둘 다 잡으면 하나로 합친다
+    # (중복 알림 방지). Target 은 규칙 문턱을 건너뛰지만 직무 필터는 받는다.
     prelim = []
     for it in listings:
         rid = it["id"]
         seen.setdefault(rid, {"first_seen": today, "title": it.get("title")})
-        ok, rsc, _parts = passes_prefilter(it, cfg)
-        if not ok:
+        disc_ok, rsc, _parts = discovery_qualified(it, cfg)
+        company = registry.qualify(it, cfg) if want_target else None
+        if want_target and company is None:
+            # target 은 아닌데 이름이 비슷하다 = alias 를 빠뜨렸을 가능성.
+            # 매칭에는 절대 쓰지 않고 경고로만 보여준다.
+            raw = (it.get("company") or {}).get("name") or ""
+            near = registry.near_misses(raw)
+            if near:
+                stats["target_near_misses"].setdefault(raw, near)
+        if disc_ok:
+            stats["discovery_candidates"] += 1
+        if company is not None:
+            stats["target_candidates"] += 1
+        picked_by_discovery = want_discovery and disc_ok
+        if not picked_by_discovery and company is None:
             continue
-        stats["rule_pass"] += 1
-        prelim.append((it, rsc))
+        stats["rule_pass"] += 1  # 기존 노트 문구가 쓰는 값이라 이름을 유지한다
+        prelim.append((it, rsc, company))
     prelim.sort(key=lambda x: x[1], reverse=True)
-    log(f"규칙 통과 {stats['rule_pass']}건 → createdAt 확인")
+    if want_target:
+        log(f"후보 {stats['rule_pass']}건 "
+            f"(discovery {stats['discovery_candidates']} · "
+            f"target {stats['target_candidates']}) → createdAt 확인")
+    else:
+        log(f"규칙 통과 {stats['rule_pass']}건 → createdAt 확인")
 
     # createdAt으로 '진짜 신규' 판정. 상세는 id당 1회만(캐시). detail 재사용.
-    fresh = []  # (it, rsc, detail, age)
-    for it, rsc in prelim:
+    fresh = []  # (it, rsc, detail, age, company)
+    for it, rsc, company in prelim:
         rid = it["id"]
         rec = seen[rid]
         if rec.get("notified"):
@@ -101,11 +143,23 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False, deps=None):
             age = created_age_days(rec.get("created_at"))
         if age is not None and age <= window:
             stats["fresh"] += 1
-            fresh.append((it, rsc, detail, age))
-    log(f"신규(createdAt≤{window}일) {stats['fresh']}건")
+            if company is not None:
+                stats["target_fresh"] += 1
+            fresh.append((it, rsc, detail, age, company))
+    log(f"신규(createdAt≤{window}일) {stats['fresh']}건"
+        + (f" (그중 target {stats['target_fresh']}건)"
+           if stats["target_fresh"] else ""))
+    nm = stats["target_near_misses"]
+    if nm:
+        log(f"  ! 감시 대상과 이름이 비슷한데 매칭 안 된 회사 {len(nm)}곳 "
+            f"(alias 누락일 수 있음):")
+        for raw, ids in list(nm.items())[:8]:
+            log(f"      \"{raw}\" ~ {', '.join(ids)}")
+        log("    맞다면 target-companies.json 의 해당 회사 aliases 에 "
+            "위 표기를 그대로 추가하세요.")
 
     if seed:
-        for it, _rsc, _d, _a in fresh:
+        for it, _rsc, _d, _a, _c in fresh:
             seen[it["id"]]["notified"] = True
         return RunResult([], seen, stats, source_results, seeded=True)
 
@@ -125,9 +179,9 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False, deps=None):
     # LLM 대상의 상세 확보 + base JD. 빈약하면 enrich 후보로.
     enr_cfg = cfg.get("enrich") or {}
     min_chars = enr_cfg.get("min_chars", 100)
-    prepared = []  # (it, rsc, detail, age, base_text, is_thin)
+    prepared = []  # (it, rsc, detail, age, base_text, is_thin, company)
     to_crawl = {}
-    for it, rsc, detail, age in to_score:
+    for it, rsc, detail, age, company in to_score:
         if detail is None:
             detail = deps.fetch_detail(it)
         base = detail_to_text(detail)
@@ -135,7 +189,7 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False, deps=None):
         if (enr_cfg.get("enabled") and is_thin and detail.get("redirectUrl")
                 and len(to_crawl) < enr_cfg.get("max_crawls_per_run", 15)):
             to_crawl[it["id"]] = detail["redirectUrl"]
-        prepared.append((it, rsc, detail, age, base, is_thin))
+        prepared.append((it, rsc, detail, age, base, is_thin, company))
 
     enriched = {}
     if to_crawl:
@@ -145,7 +199,7 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False, deps=None):
         log(f"원본 확보 {len(enriched)}/{len(to_crawl)}건")
 
     matches = []
-    for it, rsc, detail, age, base, is_thin in prepared:
+    for it, rsc, detail, age, base, is_thin, company in prepared:
         rid = it["id"]
         jd = enriched.get(rid) or base
         jd_source = ("원본크롤" if rid in enriched
@@ -157,12 +211,13 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False, deps=None):
             stats["llm_scored"] += 1
         except Exception as e:  # noqa: BLE001
             log(f"  ! LLM 실패({rid[:8]}): {e}")
-        matches.append(build_match(it, rsc, detail, age, llm_out, jd_source))
+        matches.append(build_match(it, rsc, detail, age, llm_out, jd_source,
+                                   company))
 
     # 예산 초과분: 규칙 점수만
-    for it, rsc, detail, age in rest:
+    for it, rsc, detail, age, company in rest:
         matches.append(build_match(it, rsc, detail, age, None,
-                                   "platform" if detail else None))
+                                   "platform" if detail else None, company))
 
     matches.sort(key=lambda m: m["score"], reverse=True)
     return RunResult(matches, seen, stats, source_results)

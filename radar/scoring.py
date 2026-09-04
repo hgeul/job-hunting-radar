@@ -82,14 +82,15 @@ def rule_score(item, cfg):
     return round(total, 1), parts
 
 
-def passes_prefilter(item, cfg):
-    """규칙 프리필터 통과 여부 → (통과bool, 점수, 부분점수).
+def discovery_qualified(item, cfg):
+    """Discovery Radar 프리필터 → (통과bool, 점수, 부분점수).
 
     제외 키워드에 걸리거나, 문턱 미달이거나, 역할 점수가 0이면 탈락.
+    탈락해도 **점수는 계산해서 돌려준다**: Target Radar가 잡은 공고는 이 문턱을
+    건너뛰지만 정렬·폴백용 점수는 여전히 필요하기 때문이다.
     """
-    if title_excluded(item, cfg["filter"]):
-        return False, 0.0, None
     sc, parts = rule_score(item, cfg)
-    if sc < cfg["scoring"]["rule_threshold"] or parts["role"] == 0.0:
-        return False, sc, parts
-    return True, sc, parts
+    ok = (not title_excluded(item, cfg["filter"])
+          and sc >= cfg["scoring"]["rule_threshold"]
+          and parts["role"] != 0.0)
+    return ok, sc, parts

@@ -9,8 +9,19 @@ import datetime as dt
 from radar.sources import apply_url
 
 
-def build_match(it, rsc, detail, age, llm_out, jd_source):
-    """공고 1건의 match dict 생성(LLM 결과 유무 공통)."""
+def target_info(company):
+    """TargetCompany → match/card에 실을 최소 정보. target이 아니면 None."""
+    if company is None:
+        return None
+    return {"id": company.id, "name": company.name, "tier": company.tier}
+
+
+def build_match(it, rsc, detail, age, llm_out, jd_source, company=None):
+    """공고 1건의 match dict 생성(LLM 결과 유무 공통).
+
+    company가 있으면 Target Radar가 잡은 공고다. 점수에 tier를 섞지 않는다
+    (PLAN 14절): tier는 알림 우선순위에만 쓴다.
+    """
     return {
         "id": it["id"],
         "company": it.get("company", {}).get("name", "?"),
@@ -32,6 +43,8 @@ def build_match(it, rsc, detail, age, llm_out, jd_source):
         # 마감일: 소스가 네이티브로 주면(2차 소스 closedAt) 그걸 우선, 없으면 LLM 추출값.
         "deadline": it.get("_deadline") or (llm_out.get("deadline") if llm_out else None),
         "strategy": llm_out.get("strategy") if llm_out else None,
+        "target": target_info(company),
+        "origin": "target" if company is not None else "discovery",
     }
 
 
@@ -68,4 +81,5 @@ def match_card(m, today):
         "career": m["career"], "region": m["region"],
         "sources": m.get("sources"),
         "llm": m.get("llm") is not None, "date": today,
+        "target": m.get("target"),
     }
