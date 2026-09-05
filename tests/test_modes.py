@@ -232,7 +232,8 @@ class TestOutputConsistency(unittest.TestCase):
             cfg["output"]["matches_dir"] = d
             path, n = write_note(cfg, res.matches, res.stats)
             self.assertEqual(n, 1)  # 문턱 미달인데도 수록돼야 한다
-            body = open(path, encoding="utf-8").read()
+            with open(path, encoding="utf-8") as f:
+                body = f.read()
             self.assertIn("감시 대상 기업", body)
             self.assertIn("S tier", body)
             self.assertIn("targets: 1", body)

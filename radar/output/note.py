@@ -62,7 +62,7 @@ def write_note(cfg, matches, stats):
                      f"{stats['targets_error']}")
         lines.append(f">")
         lines.append(f"> 이 다이제스트에는 target 공고가 빠져 있습니다. "
-                     f"`target-companies.json` 을 고친 뒤 다시 실행하세요.")
+                     f"감시 대상 기업 목록을 고친 뒤 다시 실행하세요.")
     lines.append("")
 
     if not shown:

@@ -88,7 +88,7 @@ dict(계약은 `radar/sources/base.py` docstring)만 보므로 수정할 필요�
    |
    +-- Discovery: 조건(직무·경력·지역·기술) 기반 규칙 점수 >= rule_threshold
    |
-   +-- Target:    target-companies.json 의 회사명과 완전일치 + 회사별 직무 필터
+   +-- Target:    target-companies.yaml 의 회사명과 완전일치 + 직무 필터
    |              (규칙 점수 문턱을 건너뛴다)
    |
    +--> 합집합 (같은 공고를 둘 다 잡으면 1건으로 합쳐 중복 알림 방지)

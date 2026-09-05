@@ -51,7 +51,8 @@ class TestDashboardWithTargets(unittest.TestCase):
             path = write_dashboard(cfg, seen)
             if path is None:
                 return None
-            return io.open(path, encoding="utf-8").read()
+            with io.open(path, encoding="utf-8") as f:
+                return f.read()
 
     def test_tier_badge_reaches_html(self):
         seen = {"a": {"first_seen": TODAY,
@@ -94,7 +95,7 @@ class TestListTargets(unittest.TestCase):
         from radar.targeting import EMPTY_REGISTRY
         out = self._capture(EMPTY_REGISTRY, make_config())
         self.assertIn("0곳", out)
-        self.assertIn("target-companies.example.json", out)
+        self.assertIn("target-companies.example.yaml", out)
 
     def test_lists_by_tier_and_marks_disabled(self):
         reg = parse_registry({"version": 1, "companies": [
@@ -135,7 +136,7 @@ class TestExampleConfigDefaults(unittest.TestCase):
             cfg = json.load(f)
         self.assertIn("targets", cfg)
         self.assertFalse(cfg["targets"]["enabled"])
-        self.assertEqual(cfg["targets"]["file"], "target-companies.json")
+        self.assertEqual(cfg["targets"]["file"], "target-companies.yaml")
 
 
 if __name__ == "__main__":

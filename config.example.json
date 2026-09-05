@@ -124,10 +124,10 @@
     "min_score_in_note": 50,
     "seen_retention_days": 90
   },
-  "_targets_comment": "감시 대상 기업 레지스트리(Target Radar). 쓰려면 target-companies.example.json 을 target-companies.json 으로 복사해 회사를 채운 뒤 enabled 를 true 로 바꾸세요. 기본이 false 인 이유: true 인데 파일이 없으면 매 실행 경고가 뜹니다. 끈 상태에서는 기존 discovery 만 돕니다.",
+  "_targets_comment": "감시 대상 기업 레지스트리(Target Radar). YAML·JSON 둘 다 읽습니다(YAML 은 PyYAML 필요). 쓰려면 target-companies.example.yaml 을 target-companies.yaml 으로 복사해 회사를 채운 뒤 enabled 를 true 로 바꾸세요. 기본이 false 인 이유: true 인데 파일이 없으면 매 실행 경고가 뜹니다. 끈 상태에서는 기존 discovery 만 돕니다.",
   "targets": {
     "enabled": false,
-    "file": "target-companies.json"
+    "file": "target-companies.yaml"
   },
   "enrich": {
     "_comment": "플랫폼 본문이 min_chars 미만이면 원본(redirectUrl)을 crawl4ai로 크롤해 실제 JD를 LLM에 전달. 실패 시 폴백. crawl4ai 미설치면 자동 생략.",

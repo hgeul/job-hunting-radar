@@ -9,7 +9,13 @@ profile.*.md
 # 감시 대상 기업 목록(어느 회사를 노리는지 = 개인정보). 공개는 example 만.
 target-companies.json
 target-companies.*.json
+target-companies.yaml
+target-companies.*.yaml
+target-companies.yml
+target-companies.*.yml
 !target-companies.example.json
+!target-companies.example.yaml
+!target-companies.example.yml
 정미/
 resumes/
 matches/

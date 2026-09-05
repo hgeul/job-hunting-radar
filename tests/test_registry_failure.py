@@ -50,10 +50,11 @@ class TestNoteSurfacesTheError(unittest.TestCase):
             cfg = make_config()
             cfg["output"]["matches_dir"] = d
             path, _ = write_note(cfg, [], stats)
-            body = open(path, encoding="utf-8").read()
+            with open(path, encoding="utf-8") as f:
+                body = f.read()
         self.assertIn("감시 대상 기업 목록을 못 읽었습니다", body)
         self.assertIn("alias 충돌", body)
-        self.assertIn("target-companies.json", body)
+        self.assertIn("감시 대상 기업 목록", body)
 
     def test_note_silent_when_registry_fine(self):
         from radar.output.note import write_note
@@ -64,7 +65,8 @@ class TestNoteSurfacesTheError(unittest.TestCase):
             cfg = make_config()
             cfg["output"]["matches_dir"] = d
             path, _ = write_note(cfg, [], stats)
-            body = open(path, encoding="utf-8").read()
+            with open(path, encoding="utf-8") as f:
+                body = f.read()
         self.assertNotIn("감시 대상 기업 목록을 못 읽었습니다", body)
 
 

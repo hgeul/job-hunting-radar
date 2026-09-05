@@ -42,10 +42,11 @@
 | `tests/` | 유닛 테스트. `python -m unittest discover -s tests -t .` |
 | `.env.example` | 크롤 대상(`PLATFORM_*`)·토큰 템플릿. `.env`로 복사해 사용 (실제 파일은 gitignore) |
 | `config.example.json` | 설정 템플릿. `config.json`으로 복사해 사용 (실제 파일은 gitignore) |
-| `target-companies.example.json` | 감시 대상 기업 목록 템플릿. `target-companies.json`으로 복사해 사용 |
+| `target-companies.example.yaml` | 감시 대상 기업 목록 템플릿(YAML). `target-companies.yaml`로 복사해 사용 |
+| `target-companies.example.json` | 같은 스키마의 JSON 판. PyYAML 없이 쓰고 싶을 때 |
 | `profile.example.md` | 이력 요약 템플릿. `profile.md`로 복사해 사용 |
 | `run.bat` | 스케줄러용 실행 래퍼 (모든 프로필 순차 실행) |
-| `requirements.txt` | 선택 의존성 (`anthropic`, `crawl4ai`) |
+| `requirements.txt` | 선택 의존성 (`anthropic`, `crawl4ai`, `pyyaml`) |
 | `matches/{name}/YYYY-MM-DD.md` | (자동생성) 그날의 매칭 다이제스트 |
 | `matches/{name}/index.html` | (자동생성) HTML 대시보드 |
 | `state/{name}.json` | (자동생성) 본 공고 id·createdAt 캐시·notified 플래그·대시보드 카드 |
@@ -203,28 +204,55 @@ crawl4ai(로컬 헤드리스 브라우저)로 크롤해 실제 JD를 LLM에 전�
 그 회사에서 공고가 나면 규칙 점수 문턱에 못 미쳐도 놓치지 않는다.
 
 ```bash
-cp target-companies.example.json target-companies.json
+cp target-companies.example.yaml target-companies.yaml   # JSON 을 쓰려면 .example.json
 # 회사를 채운 뒤
 python job_watcher.py --list-targets     # 제대로 읽혔는지 먼저 확인
 ```
 
-`config.json`의 `targets.file`이 이 파일을 가리킨다. 파일이 없으면 target 기능만
-꺼지고 기존 탐색은 그대로 돈다(하위호환).
+`config.json`의 `targets.file`이 이 파일을 가리킨다. YAML·JSON 둘 다 읽는다
+(YAML은 `pip install pyyaml` 필요). 파일이 없으면 target 기능만 꺼지고 기존 탐색은
+그대로 돈다(하위호환).
 
-```jsonc
-{
-  "id": "example-alpha",              // 소문자·숫자·하이픈. 한 번 정하면 바꾸지 않는다
-  "name": "예시알파",
-  "aliases": ["Example Alpha", "예시알파(주)"],   // 공고에 뜨는 표기를 전부
-  "tier": "S",                        // S/A/B/C. 점수엔 안 섞고 알림 우선순위에만
-  "enabled": true,
-  "roles": {
-    "include": ["백엔드", "서버", "java"],
-    "exclude": ["프론트엔드", "QA 엔지니어"]
-  },
-  "sources": [{ "type": "platform" }]
-}
+```yaml
+defaults:
+  # 전 회사 공통 직무 필터. 회사마다 복제하지 않는다.
+  # 비교 전에 공백·하이픈을 지우므로 "Back-end"와 "backend",
+  # "서버_백엔드"와 "백엔드"가 같이 잡힌다.
+  # 한글 표기를 꼭 같이 넣을 것. 영문만 넣으면 국내 공고 대부분이 조용히 탈락한다.
+  roles:
+    include: [backend, server, engineer, 백엔드, 서버, 개발자, 엔지니어]
+    exclude: [프론트엔드, 안드로이드, "qa 엔지니어", 디자이너]
+
+companies:
+  - id: example-alpha            # 소문자·숫자·하이픈. 한 번 정하면 바꾸지 않는다
+    name: 예시알파
+    aliases: [Example Alpha, 예시알파(주)]   # 공고에 뜨는 표기를 전부
+    tier: S                      # S/A/B/C. 점수엔 안 섞고 알림 우선순위에만
+    enabled: true
+    priority: 100                # 같은 tier 안 순서
+
+    careers_url: https://careers.example-alpha.invalid/   # 공식 채용페이지
+    platform_family: example_ats   # 같은 값을 쓰는 회사는 어댑터 하나로 함께 커버
+    verification: verified         # URL 을 어떻게 확인했는지 메모
+    collection_status: adapter_candidate   # 아래 표 참고
+    # 그룹 포털을 공유하면 자기 공고만 골라낼 필터를 넣는다
+    source_filter: { company: 예시알파 }
+    # roles 를 생략하면 위 defaults.roles 를 물려받는다
 ```
+
+### `collection_status`: 지금 수집해도 되는가
+
+| 값 | 뜻 |
+|---|---|
+| `generic_adapter_priority` | 공통 ATS. 범용 어댑터를 먼저 만들면 여러 곳이 함께 켜진다 |
+| `adapter_candidate` | 공개 목록이 있어 바로 collector 후보 |
+| `dynamic_research_needed` | JS 렌더링 비중이 높다. endpoint 조사 먼저 |
+| `restricted_research_needed` | 자동 접근이 제한될 수 있다. **차단 우회부터 만들지 않는다** |
+| `group_portal_research_needed` | 그룹 통합 포털. `source_filter`로 회사를 분리 |
+| `job_endpoint_research_needed` | 공고 목록 endpoint 를 더 확인해야 함 |
+
+앞의 두 값만 "지금 수집 시도 가능"으로 취급한다. `python job_watcher.py --list-targets`가
+이 분류로 **어댑터 구현 순서**(하나 만들면 몇 곳이 켜지는지)를 계산해서 보여준다.
 
 ### 회사명을 어떻게 맞추나
 
@@ -249,7 +277,7 @@ python job_watcher.py --list-targets     # 제대로 읽혔는지 먼저 확인
 | 규칙 점수 문턱 | 적용 | **건너뜀** |
 | 노트 수록 문턱 | 적용 | **건너뜀** |
 | 텔레그램 문턱 | 적용 | **건너뜀** |
-| 직무 필터 | 전역 제외 키워드 | 회사별 `roles`(없으면 전역 제외 키워드) |
+| 직무 필터 | 전역 제외 키워드 | 회사 `roles` → 없으면 `defaults.roles` → 둘 다 없을 때만 전역 제외 키워드 |
 | 신규·중복 판정 | 적용 | 적용 (target이라도 같은 공고를 매일 알리진 않는다) |
 
 노트·대시보드·텔레그램에서 🎯와 tier로 구분된다.

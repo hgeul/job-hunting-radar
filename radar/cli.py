@@ -39,32 +39,91 @@ def build_parser():
 
 
 def print_targets(registry, cfg):
-    """--list-targets: 레지스트리가 실제로 어떻게 읽혔는지 눈으로 확인."""
+    """--list-targets: 레지스트리가 실제로 어떻게 읽혔는지 눈으로 확인.
+
+    tier 목록만 뱉지 않고 **공식 수집 전략**까지 같이 보여준다. 어느 어댑터를
+    먼저 만들면 몇 곳이 함께 켜지는지가 Phase 4 의 실제 의사결정이기 때문이다.
+    """
     tcfg = cfg.get("targets") or {}
     src = tcfg.get("file") or "(설정 없음)"
     if not len(registry):
         log(f"감시 대상 기업 0곳. targets.file={src}")
         log("  · 파일이 없거나 targets.enabled=false 입니다. "
-            "target-companies.example.json 을 복사해 만드세요.")
+            "target-companies.example.yaml 을 복사해 만드세요.")
         return
     on = registry.enabled_companies()
     log(f"감시 대상 기업 {len(registry)}곳 (활성 {len(on)}곳) · targets.file={src}")
+
     by_tier = {}
     for c in registry.companies:
         by_tier.setdefault(c.tier, []).append(c)
     for tier in ("S", "A", "B", "C"):
-        for c in sorted(by_tier.get(tier, []), key=lambda x: x.id):
+        rows = by_tier.get(tier)
+        if not rows:
+            continue
+        log(f"  ── {tier} tier ({len(rows)}곳) ──")
+        for c in sorted(rows, key=lambda x: (-(x.priority or 0), x.id)):
             state = "  " if c.enabled else "off"
             roles = ""
             if c.roles_include or c.roles_exclude:
                 roles = f" | 직무 +{len(c.roles_include)}/-{len(c.roles_exclude)}"
-            alias = f" | alias {len(c.aliases)}개" if c.aliases else " | alias 없음"
-            log(f"  [{tier}]{state} {c.id:24s} {c.name}{alias}{roles}")
+            alias = f" | alias {len(c.aliases)}" if c.aliases else " | alias 없음"
+            fam = f" | {c.platform_family}" if c.platform_family else ""
+            # 직접 확인이 아닌 URL 은 눈에 띄게 둔다(간접 확인 + 접근제한이 최악 조합).
+            ver = ""
+            if c.verification and c.verification != "verified":
+                ver = f" | {c.verification}"
+            log(f"  [{tier}]{state} {c.id:22s} {c.name}{alias}{roles}{fam}{ver}")
+
+    log("")
+    log("공식 채용소스 수집 계획 (어댑터 하나로 여러 곳을 커버하는 순서):")
+    for fam, cs in registry.collectible_families().items():
+        mark = "★" if len(cs) > 1 else " "
+        log(f"  {mark} {fam:28s} {len(cs)}곳: {', '.join(c.id for c in cs)}")
+
+    research = registry.research_needed()
+    if research:
+        log("")
+        log("사람이 수집 전략을 먼저 조사해야 하는 곳:")
+        for status in sorted(research):
+            cs = research[status]
+            log(f"  · {status:30s} {len(cs)}곳: {', '.join(c.id for c in cs)}")
+        if "restricted_research_needed" in research:
+            log("    ! restricted 는 자동 접근이 제한될 수 있다는 뜻입니다. "
+                "차단 우회 크롤러를 만들지 마세요.")
+
+    typos = registry.key_typos()
+    if typos:
+        log("")
+        log(f"  ! 모르는 필드명이 있는 회사 {len(typos)}곳 (오타 가능성):")
+        for cid, keys in list(typos.items())[:8]:
+            log(f"      {cid}: {', '.join(keys)}")
+
+    unclassified = registry.unclassified()
+    if unclassified:
+        log("")
+        log(f"  ! collection_status 가 없는 활성 기업 {len(unclassified)}곳: "
+            f"{', '.join(c.id for c in unclassified[:8])}")
+        log("    수집 계획 어느 목록에도 안 나옵니다. 상태를 지정하세요.")
+
+    conflicts = registry.portal_conflicts()
+    if conflicts:
+        log("")
+        log("  ! 같은 채용 포털을 공유하는데 source_filter 가 없는 회사:")
+        for url, cs in list(conflicts.items())[:6]:
+            log(f"      {', '.join(c.id for c in cs)}  <- {url}")
+        log("    포털을 긁으면 남의 회사 공고를 자기 것으로 가져갈 수 있습니다. "
+            "각 회사에 source_filter 를 넣으세요.")
+
     no_alias = [c.id for c in on if not c.aliases]
     if no_alias:
+        log("")
         log(f"  ! alias 없는 활성 기업 {len(no_alias)}곳: {', '.join(no_alias[:8])}")
         log("    공고에 뜨는 표기가 name과 정확히 다르면 못 잡습니다. "
             "한글명·영문명을 aliases에 넣으세요.")
+    no_url = [c.id for c in on if not c.careers_url]
+    if no_url:
+        log(f"  ! careers_url 없는 활성 기업 {len(no_url)}곳: {', '.join(no_url[:8])}")
 
 
 def main(argv=None):
@@ -88,7 +147,7 @@ def main(argv=None):
         # 통째로 안 나가는 게 더 나쁘다. 대신 노트에도 경고를 남긴다.
         log(f"  ! 감시 대상 기업 설정 오류: {registry_error}")
         log("    → 이번 실행은 discovery 만 돕니다. "
-            "target-companies.json 을 고친 뒤 다시 실행하세요.")
+            "감시 대상 기업 목록을 고친 뒤 다시 실행하세요.")
     if args.list_targets:
         print_targets(registry, cfg)
         return

@@ -7,3 +7,7 @@ anthropic>=0.40
 # 읽어 LLM에 전달. 설치 후 `crawl4ai-setup`으로 Chromium 1회 설치 필요.
 # 미설치 시 enrich 자동 생략(빈약 본문으로 폴백).
 crawl4ai>=0.9
+
+# 감시 대상 기업 목록(target-companies.yaml)을 YAML로 쓸 때만 필요.
+# JSON(target-companies.json)으로 쓰면 불필요. 없으면 무엇을 설치할지 알려주고 멈춘다.
+pyyaml>=6

@@ -85,6 +85,7 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
         "window": window, "mode": mode,
         "discovery_candidates": 0, "target_candidates": 0, "target_fresh": 0,
         "target_near_misses": {}, "targets_error": registry_error,
+        "target_role_dropped": 0, "target_role_dropped_samples": [],
     }
 
     # 두 레이더가 각자 후보를 고르고, 같은 공고를 둘 다 잡으면 하나로 합친다
@@ -94,7 +95,13 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
         rid = it["id"]
         seen.setdefault(rid, {"first_seen": today, "title": it.get("title")})
         disc_ok, rsc, _parts = discovery_qualified(it, cfg)
-        company = registry.qualify(it, cfg) if want_target else None
+        company, why = (registry.qualify_verbose(it, cfg) if want_target
+                        else (None, None))
+        if why == "role":
+            stats["target_role_dropped"] += 1
+            if len(stats["target_role_dropped_samples"]) < 8:
+                stats["target_role_dropped_samples"].append(
+                    f"{(it.get('company') or {}).get('name', '?')} / {it.get('title', '?')}")
         if want_target and company is None:
             # target 은 아닌데 이름이 비슷하다 = alias 를 빠뜨렸을 가능성.
             # 매칭에는 절대 쓰지 않고 경고로만 보여준다.
@@ -149,13 +156,20 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
     log(f"신규(createdAt≤{window}일) {stats['fresh']}건"
         + (f" (그중 target {stats['target_fresh']}건)"
            if stats["target_fresh"] else ""))
+    if stats["target_role_dropped"]:
+        log(f"  · 감시 대상 기업 공고 {stats['target_role_dropped']}건이 "
+            f"직무 필터에서 제외됨:")
+        for s in stats["target_role_dropped_samples"][:5]:
+            log(f"      {s}")
+        log("    원하던 공고가 섞여 있으면 roles.include 를 넓히거나 "
+            "exclude 의 짧은 조각을 구체적으로 바꾸세요.")
     nm = stats["target_near_misses"]
     if nm:
         log(f"  ! 감시 대상과 이름이 비슷한데 매칭 안 된 회사 {len(nm)}곳 "
             f"(alias 누락일 수 있음):")
         for raw, ids in list(nm.items())[:8]:
             log(f"      \"{raw}\" ~ {', '.join(ids)}")
-        log("    맞다면 target-companies.json 의 해당 회사 aliases 에 "
+        log("    맞다면 감시 대상 기업 목록의 해당 회사 aliases 에 "
             "위 표기를 그대로 추가하세요.")
 
     if seed:
