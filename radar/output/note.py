@@ -48,9 +48,15 @@ def write_note(cfg, matches, stats):
     enr = stats.get("enriched", 0)
     enr_s = f"원본크롤 {enr}건 · " if enr else ""
     wd = stats.get("window", "?")
+    # 구조화 매칭 확보 건수는 노트에 남긴다. 콘솔 로그는 흘러가지만 노트는 남아서
+    # "언제부터 요구사항이 안 잡히기 시작했나"를 나중에 되짚을 수 있다.
+    # LLM 을 실제로 부른 실행에서만 낸다(--no-llm 이면 "0건 (요구사항 매칭 0건)"이 된다).
+    st_n = stats.get("llm_structured")
+    st_s = (f"(요구사항 매칭 {st_n}건) "
+            if st_n is not None and stats.get("llm_scored") else "")
     lines.append(
         f"> **최근 {wd}일 등록 공고** 대상 · 스캔 {stats['scanned']}건 · 규칙통과 {stats['rule_pass']}건 · "
-        f"신규 {stats['fresh']}건 · LLM평가 {stats['llm_scored']}건 · "
+        f"신규 {stats['fresh']}건 · LLM평가 {stats['llm_scored']}건 {st_s}· "
         f"{enr_s}노트수록 {len(shown)}건 (점수≥{minsc})"
     )
     if stats.get("llm_note"):
@@ -120,6 +126,15 @@ def write_note(cfg, matches, stats):
                 lines.append(f"- ✅ 부합: " + " / ".join(m["reasons"]))
             if m.get("gaps"):
                 lines.append(f"- ⚠️ 리스크: " + " / ".join(m["gaps"]))
+            # 결격 후보는 점수보다 먼저 눈에 띄어야 한다. 다만 아직 자동 판정에
+            # 반영하지 않으므로 그 사실을 같이 적는다.
+            # 여기 싣는 건 blocker 의 detail 뿐이다. 요구사항별 근거(이력 원문 인용)는
+            # 텔레그램으로 첨부되어 나가므로 노트에 싣지 않는다.
+            if m.get("hard_blockers"):
+                lines.append("- 🚫 **결격 후보**: "
+                             + " / ".join(b["detail"] for b in m["hard_blockers"]))
+                lines.append("    - LLM 이 공고에서 뽑은 후보입니다. 점수에는 아직 "
+                             "반영하지 않으니 공고 원문을 직접 확인하세요.")
             # 알림문턱(기본 60) 넘는 유망 공고엔 지원·합격 전략 코멘트
             if m["score"] >= notify and m.get("strategy"):
                 lines.append(f"- 🎯 **지원·합격 전략**")

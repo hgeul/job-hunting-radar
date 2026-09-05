@@ -92,7 +92,8 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
 
     stats = {
         "scanned": len(listings), "rule_pass": 0, "detail_fetched": 0,
-        "fresh": 0, "llm_scored": 0, "enriched": 0, "llm_note": None,
+        "fresh": 0, "llm_scored": 0, "llm_structured": 0, "llm_demoted": 0,
+        "llm_blockers": 0, "enriched": 0, "llm_note": None,
         "window": window, "mode": mode,
         "discovery_candidates": 0, "target_candidates": 0, "target_fresh": 0,
         "target_near_misses": {}, "targets_error": registry_error,
@@ -237,8 +238,27 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
             stats["llm_scored"] += 1
         except Exception as e:  # noqa: BLE001
             log(f"  ! LLM 실패({rid[:8]}): {e}")
-        matches.append(build_match(it, rsc, detail, age, llm_out, jd_source,
-                                   company))
+        m = build_match(it, rsc, detail, age, llm_out, jd_source, company)
+        # 구조화 매칭을 실제로 받아온 건수. LLM 이 응답은 했는데 requirements 가
+        # 비면 여기서 차이가 드러난다(프롬프트·토큰 예산 회귀 감지용).
+        if m.get("structured"):
+            stats["llm_structured"] += 1
+        # 근거 없는 FULL 주장을 몇 번 내렸는지. 이 방어가 실제로 발동하는지
+        # 세지 않으면 완료조건이 죽은 규칙이 된다.
+        stats["llm_demoted"] += m.get("demoted") or 0
+        if m.get("hard_blockers"):
+            stats["llm_blockers"] += 1
+        matches.append(m)
+
+    if stats["llm_scored"]:
+        # 화면에 남겨야 프롬프트가 조용히 망가진 걸 알아챈다. 0/n 이면 응답이
+        # 잘렸거나(토큰) 스키마 지시가 무시된 것이다.
+        log(f"LLM 응답 {stats['llm_scored']}건 중 요구사항 매칭 확보 "
+            f"{stats['llm_structured']}건"
+            + (f" · 근거없어 강등된 요구사항 {stats['llm_demoted']}건"
+               if stats["llm_demoted"] else "")
+            + (f" · 결격 후보 있는 공고 {stats['llm_blockers']}건"
+               if stats["llm_blockers"] else ""))
 
     # 예산 초과분: 규칙 점수만
     for it, rsc, detail, age, company in rest:

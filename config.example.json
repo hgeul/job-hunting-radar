@@ -115,7 +115,8 @@
     "model": "claude-sonnet-5",
     "cli_model": "sonnet",
     "max_calls_per_run": 45,
-    "max_output_tokens": 800
+    "_max_output_tokens_comment": "LLM 이 요구사항 매칭 배열(requirements)까지 돌려주므로 응답이 길다. 상한에 걸리면 응답이 통째로 버려지고 규칙 점수로 폴백한다(호출 비용은 그대로 나간다). 코드가 6000 미만은 6000으로 올려 쓰므로 그보다 작은 값을 적어도 효과가 없다. 늘릴 때만 의미가 있다. provider=claude_cli 는 CLAUDE_CODE_MAX_OUTPUT_TOKENS 환경변수로, api 는 max_tokens 파라미터로 전달된다.",
+    "max_output_tokens": 6000
   },
   "output": {
     "matches_dir": "matches/honggildong",
