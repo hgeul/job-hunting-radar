@@ -69,6 +69,7 @@ flowchart TD
 | 단계 | 모듈 |
 |---|---|
 | ① 수집 | `radar/sources/` (`base.py` 공통계약 + `platform_a.py`·`platform_b.py` 어댑터), `radar/dedup.py` |
+| ①-c 공식 채용페이지 | `radar/sources/official/` (`platform_family` 단위 어댑터), `radar/health.py`(소스 상태) |
 | ①-b 감시 대상 판정 | `radar/targeting.py` (회사명 정규화·alias 완전일치·직무 필터) |
 | ② 규칙 점수 | `radar/scoring.py` |
 | ③ 신규 판정 | `radar/pipeline.py`, `radar/jd.py`, `radar/state.py` |
@@ -112,6 +113,8 @@ dict(계약은 `radar/sources/base.py` docstring)만 보므로 수정할 필요�
 ```
 
 - `created_at`: 상세 재조회 안 하려는 캐시. `notified`: 재알림 방지.
+- 공식 채용소스 상태는 **별도 파일** `state/{name}.sources.json`에 둔다. 이 파일은
+  `{공고id: 레코드}` 형태라 최상위에 다른 키를 섞으면 저장·대시보드가 깨지기 때문이다.
 - `card`: 노트에 수록된 공고만 붙는다. HTML 대시보드가 여러 날치를 모아 보여주는 재료.
   감시 대상 기업 공고면 `card.target = {id, name, tier}`가 함께 붙는다(없으면 일반 공고).
 - 키는 소스 접두어 없는 **raw 공고 id**다. 바꾸면 기존 `notified` 이력이 끊겨 재알림이 난다.

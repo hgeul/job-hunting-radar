@@ -45,13 +45,16 @@ DEFAULT_DEPS = Deps()
 class RunResult:
     """1회 실행 결과. cli가 이걸 받아 노트·상태·알림을 만든다."""
 
-    __slots__ = ("matches", "seen", "stats", "source_results", "seeded")
+    __slots__ = ("matches", "seen", "stats", "source_results",
+                 "official_results", "seeded")
 
-    def __init__(self, matches, seen, stats, source_results, seeded=False):
+    def __init__(self, matches, seen, stats, source_results, seeded=False,
+                 official_results=None):
         self.matches = matches
         self.seen = seen
         self.stats = stats
         self.source_results = source_results
+        self.official_results = official_results or []
         self.seeded = seeded
 
     def targets(self):
@@ -60,7 +63,8 @@ class RunResult:
 
 
 def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
-        mode=MODE_ALL, registry=None, registry_error=None, deps=None):
+        mode=MODE_ALL, registry=None, registry_error=None,
+        official=False, deps=None):
     """공고 수집부터 매칭 산출까지. 부수효과는 seen dict 갱신뿐이다."""
     # 기본값을 인자 기본값으로 굳히지 않는다(모듈 전역을 갈아끼운 테스트가 먹히도록).
     deps = deps or DEFAULT_DEPS
@@ -69,6 +73,12 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
         raise ValueError(f"알 수 없는 mode: {mode} (허용: {', '.join(MODES)})")
     want_discovery = mode in (MODE_DISCOVERY, MODE_ALL)
     want_target = mode in (MODE_TARGET, MODE_ALL) and len(registry) > 0
+    # 공식 채용페이지는 target 을 볼 때만, 그리고 명시적으로 켰을 때만 수집한다.
+    want_official = bool(official) and want_target
+    if official and not want_official:
+        why = ("mode=discovery 라 target 을 안 봅니다"
+               if mode == MODE_DISCOVERY else "감시 대상 기업이 0곳입니다")
+        log(f"  ! --official 을 켰지만 공식 채용페이지를 수집하지 않습니다: {why}")
     if mode == MODE_TARGET and len(registry) == 0:
         log("  ! --mode target 인데 감시 대상 기업이 0곳입니다 "
             "(config.targets.file 확인). 이번 실행은 아무것도 찾지 못합니다.")
@@ -76,7 +86,8 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
     max_detail = cfg["search"]["max_detail_fetches"]
 
     log("공고 수집 시작…")
-    listings, source_results = deps.collect(cfg)
+    listings, source_results, official_results = deps.collect(
+        cfg, registry=registry, with_official=want_official)
     log(f"총 {len(listings)}건 수집(dedupe)")
 
     stats = {
@@ -175,7 +186,8 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
     if seed:
         for it, _rsc, _d, _a, _c in fresh:
             seen[it["id"]]["notified"] = True
-        return RunResult([], seen, stats, source_results, seeded=True)
+        return RunResult([], seen, stats, source_results, seeded=True,
+                         official_results=official_results)
 
     # LLM 정밀 점수
     engine, why = deps.resolve_engine(cfg, no_llm)
@@ -234,4 +246,5 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
                                    "platform" if detail else None, company))
 
     matches.sort(key=lambda m: m["score"], reverse=True)
-    return RunResult(matches, seen, stats, source_results)
+    return RunResult(matches, seen, stats, source_results,
+                     official_results=official_results)

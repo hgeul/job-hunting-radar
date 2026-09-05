@@ -23,7 +23,7 @@ class FakeDeps(pipeline.Deps):
     """네트워크·LLM 없이 파이프라인만 돌리는 의존 묶음."""
 
     def __init__(self, items, details, engine=("fake", None), llm=None, crawl=None):
-        self.calls = {"detail": [], "llm": [], "crawl": 0}
+        self.calls = {"detail": [], "llm": [], "crawl": 0, "official": None}
         self._items = items
         self._details = details
         self._engine = engine
@@ -33,8 +33,9 @@ class FakeDeps(pipeline.Deps):
             collect=self._collect, fetch_detail=self._detail, crawl=self._do_crawl,
             resolve_engine=self._resolve, llm_score=self._score)
 
-    def _collect(self, cfg):
-        return [dict(i) for i in self._items], []
+    def _collect(self, cfg, registry=None, with_official=False):
+        self.calls["official"] = with_official
+        return [dict(i) for i in self._items], [], []
 
     def _detail(self, item):
         self.calls["detail"].append(item["id"])

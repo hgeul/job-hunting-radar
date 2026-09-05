@@ -50,6 +50,7 @@
 | `matches/{name}/YYYY-MM-DD.md` | (자동생성) 그날의 매칭 다이제스트 |
 | `matches/{name}/index.html` | (자동생성) HTML 대시보드 |
 | `state/{name}.json` | (자동생성) 본 공고 id·createdAt 캐시·notified 플래그·대시보드 카드 |
+| `state/{name}.sources.json` | (자동생성) 공식 채용소스별 마지막 성공·실패·공고수 |
 
 ### `radar/` 구성
 
@@ -61,6 +62,8 @@
 | `dedup.py` | 소스 간 중복 병합(회사+제목 완전일치일 때만) |
 | `scoring.py` | 규칙 기반 프리필터 점수 |
 | `targeting.py` | 감시 대상 기업 레지스트리·회사명 정규화·alias 매칭 |
+| `sources/official/` | 공식 채용페이지 어댑터. `platform_family` 단위로 여러 회사를 함께 커버 |
+| `health.py` | 소스별 마지막 성공·연속 실패 기록. "공고 없음"과 "수집 실패"를 구분 |
 | `jd.py` / `enrich.py` | JD 본문 처리 / 원본 크롤(crawl4ai) |
 | `llm.py` | LLM 엔진 선택·프롬프트·채점 |
 | `models.py` | 매칭 결과 모델·마감일 해석 |
@@ -117,6 +120,9 @@ python job_watcher.py --mode discovery   # 조건 기반 전체 탐색만
 python job_watcher.py --mode target      # 감시 대상 기업만
 python job_watcher.py --mode all         # 둘 다 (기본값)
 python job_watcher.py --list-targets     # 감시 대상 기업 목록 확인 후 종료
+
+python job_watcher.py --official         # 공식 채용페이지도 수집(수집 가능으로 분류된 곳만)
+python job_watcher.py --source-health    # 공식 채용소스 상태 확인 후 종료
 ```
 
 **최초 세팅 권장 순서**: ① `--no-llm --dry-run`으로 매칭 확인 → ② (선택) `--seed`를 2~3번
@@ -282,6 +288,37 @@ companies:
 
 노트·대시보드·텔레그램에서 🎯와 tier로 구분된다.
 같은 공고를 두 레이더가 다 잡아도 알림은 한 번만 간다.
+
+### 공식 채용페이지 직접 수집
+
+채용 플랫폼에 안 올라오는 공고를 놓치지 않으려면 회사 공식 페이지를 직접 본다.
+
+```bash
+python job_watcher.py --official --mode target
+```
+
+**회사마다 크롤러를 만들지 않는다.** 같은 채용 솔루션(ATS)을 쓰는 회사들은
+`platform_family` 하나로 묶여 어댑터 한 벌이 전부 담당한다. 어느 어댑터를 먼저
+만들면 몇 곳이 켜지는지는 `--list-targets`가 계산해서 보여준다.
+
+기본은 꺼져 있다. 외부 사이트에 요청을 보내는 동작이라 명시적으로 켜야 한다.
+
+#### 수집이 되는지 확인
+
+```bash
+python job_watcher.py --source-health
+```
+
+**"공고 0건"과 "수집 실패"를 절대 같은 것으로 두지 않는다.** 회사 페이지 주소가
+바뀌어 못 가져오는 것과 그 회사가 이번 주 공고를 안 낸 것은 완전히 다른 사건이다.
+70건이던 회사가 0건이 되는 것도 따로 경고한다.
+
+```
+! greetinghr:example-alpha  공고 -건 | 성공한 적 없음 | 연속실패 2회
+      마지막 오류: HTTP 404
+```
+
+수집 결과는 `state/{name}.sources.json`에 쌓인다. 본 공고 상태 파일과는 별도다.
 
 ## 서류 마감일 + HTML 대시보드
 

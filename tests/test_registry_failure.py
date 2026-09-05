@@ -107,9 +107,9 @@ class TestCliFailureMode(unittest.TestCase):
             cfg_path = self._broken_config(d)
             calls = {}
 
-            def fake_collect(cfg):
+            def fake_collect(cfg, registry=None, with_official=False):
                 calls["ran"] = True
-                return [], []
+                return [], [], []
 
             orig = pipeline.DEFAULT_DEPS
             pipeline.DEFAULT_DEPS = pipeline.Deps(collect=fake_collect)

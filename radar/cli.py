@@ -5,6 +5,7 @@ import argparse
 import datetime as dt
 
 from radar import pipeline
+from radar import health as health_mod
 from radar.config import load_config, load_profile
 from radar.models import match_card
 from radar.notify import send_telegram, telegram_test
@@ -35,6 +36,11 @@ def build_parser():
                          "감시 대상 기업이 0곳이면 all과 discovery는 결과가 같다")
     ap.add_argument("--list-targets", action="store_true",
                     help="감시 대상 기업 목록을 출력하고 종료(설정 점검용)")
+    ap.add_argument("--official", action="store_true",
+                    help="감시 대상 기업의 공식 채용페이지도 수집(수집 가능으로 "
+                         "분류된 곳만). 채용 플랫폼에 안 올라오는 공고를 잡는다")
+    ap.add_argument("--source-health", action="store_true",
+                    help="공식 채용소스 상태를 출력하고 종료")
     return ap
 
 
@@ -126,6 +132,69 @@ def print_targets(registry, cfg):
         log(f"  ! careers_url 없는 활성 기업 {len(no_url)}곳: {', '.join(no_url[:8])}")
 
 
+def print_source_health(cfg):
+    """--source-health: 공식 채용소스가 언제 마지막으로 성공했는지."""
+    doc = health_mod.load_health(cfg)
+    sources = doc.get("sources") or {}
+    if not sources:
+        log("공식 채용소스 수집 기록이 없습니다. "
+            "`python job_watcher.py --official` 로 한 번 수집하세요.")
+        return
+    log(f"공식 채용소스 {len(sources)}곳")
+    for key in sorted(sources):
+        rec = sources[key]
+        fails = rec.get("consecutive_failures", 0)
+        days = health_mod.stale_since(rec)
+        age = (f"마지막 성공 {days}일 전" if days is not None
+               else "성공한 적 없음")
+        mark = "!" if fails else " "
+        pv = rec.get("parser_version")
+        log(f"  {mark} {key:34s} 공고 {str(rec.get('jobs_seen', '-')):>4}건 | {age}"
+            + (f" | 연속실패 {fails}회" if fails else "")
+            + (f" | parser v{pv}" if pv else ""))
+        if rec.get("last_error"):
+            log(f"      마지막 오류: {rec['last_error'][:100]}")
+        if rec.get("last_nonzero_jobs"):
+            log(f"      ! 전에는 {rec['last_nonzero_jobs']}건이었는데 지금 0건입니다. "
+                f"수집은 되지만 결과가 비었습니다.")
+        if rec.get("final_url"):
+            log(f"      최종 URL: {rec['final_url']}")
+    warn = health_mod.warnings(doc)
+    if warn:
+        log("")
+        failed = [w for w in warn if w["kind"] == "failed"]
+        emptied = [w for w in warn if w["kind"] == "emptied"]
+        if failed:
+            log(f"  ! 연속 실패 중인 소스 {len(failed)}곳. "
+                f"공고가 없는 게 아니라 수집이 안 되는 상태입니다.")
+        if emptied:
+            log(f"  ! 있던 공고가 사라진 소스 {len(emptied)}곳. "
+                f"수집은 되는데 결과가 0건입니다(필터·차단 변경 의심).")
+
+
+def report_official(cfg, results, save=True):
+    """수집 결과를 건강 기록에 반영하고 요약을 남긴다."""
+    if not results:
+        return
+    summary = health_mod.summarize(results)
+    log(f"공식 채용소스: {summary['checked']}곳 확인 · 공고 {summary['jobs']}건 "
+        f"· 실패 {summary['failed']}곳 · 공고없음 {summary['empty']}곳")
+    if summary["failed_ids"]:
+        log(f"  ! 수집 실패: {', '.join(summary['failed_ids'])}")
+        log("    '공고 없음'이 아니라 '못 가져옴'입니다. URL 이나 페이지 구조를 확인하세요.")
+    doc = health_mod.load_health(cfg)
+    health_mod.record(doc, results)
+    if save:
+        health_mod.save_health(cfg, doc)
+    for w in health_mod.warnings(doc):
+        if w["kind"] == "failed":
+            log(f"  ! {w['source_id']} 연속 {w['failures']}회 실패 "
+                f"(마지막 성공 {w['last_success_at'] or '없음'})")
+        else:
+            log(f"  ! {w['source_id']} 공고가 {w['was']}건에서 0건이 됐습니다 "
+                f"(수집은 성공). 페이지 필터나 접근 정책 변경을 의심하세요.")
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
 
@@ -151,6 +220,9 @@ def main(argv=None):
     if args.list_targets:
         print_targets(registry, cfg)
         return
+    if args.source_health:
+        print_source_health(cfg)
+        return
     person = cfg.get("name", "")
     if person:
         log(f"===== 프로필: {person} ({args.config}) =====")
@@ -167,10 +239,13 @@ def main(argv=None):
     result = pipeline.run(cfg, seen, profile_text, window,
                           no_llm=args.no_llm, seed=args.seed,
                           mode=args.mode, registry=registry,
-                          registry_error=registry_error)
+                          registry_error=registry_error, official=args.official)
     seen, stats, matches = result.seen, result.stats, result.matches
 
     if result.seeded:
+        # seed 여도 공식 페이지 수집은 실제로 일어났다. 건강 기록을 버리면
+        # 그 실행에서만 "0건 vs 실패" 구분이 조용히 무효가 된다.
+        report_official(cfg, result.official_results, save=not args.dry_run)
         if not args.dry_run:
             save_seen(cfg, seen)
         log(f"--seed 완료: 신규 {stats['fresh']}건을 notified 처리. "
@@ -187,6 +262,8 @@ def main(argv=None):
         log(f"  {flag} {m['score']:>5}{mark} | {m['company']} | {m['title'][:34]}")
 
     if args.dry_run:
+        # 수집은 이미 실제로 일어났다. 상태는 안 남기되 결과는 보여준다.
+        report_official(cfg, result.official_results, save=False)
         log("--dry-run: 노트/상태 저장 생략")
         return
 
@@ -201,6 +278,7 @@ def main(argv=None):
             rec["rule"] = m["rule"]
             rec["card"] = match_card(m, today)
 
+    report_official(cfg, result.official_results)
     path, n = write_note(cfg, matches, stats)
     save_seen(cfg, seen)
     dash = write_dashboard(cfg, seen)

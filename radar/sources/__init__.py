@@ -8,9 +8,10 @@
 core pipeline은 건드리지 않는다.
 """
 
-from radar.dedup import dedup_across_sources
+from radar.dedup import canonicalize, dedup_across_sources
 from radar.sources.base import JobSource, SourceResult  # noqa: F401 (재수출)
 from radar.sources.platform_a import PlatformASource, build_filter_qs  # noqa: F401
+from radar.sources.official import OFFICIAL_ADAPTERS, collect_official
 from radar.sources.platform_b import PlatformBSource
 from radar.util import log
 
@@ -27,8 +28,11 @@ def get_source(name):
 
 
 def source_for(item):
-    """item의 _source에 맞는 어댑터. 모르는 소스면 1차 소스로 폴백."""
-    return REGISTRY.get(item.get("_source"), REGISTRY[DEFAULT_SOURCE])
+    """item의 _source에 맞는 어댑터. 공식 소스 → 플랫폼 소스 → 1차 소스 순."""
+    name = item.get("_source")
+    if name in OFFICIAL_ADAPTERS:
+        return OFFICIAL_ADAPTERS[name]
+    return REGISTRY.get(name, REGISTRY[DEFAULT_SOURCE])
 
 
 def iter_source_configs(cfg):
@@ -48,14 +52,17 @@ def apply_url(item, detail=None):
     return source_for(item).apply_url(item, detail)
 
 
-def collect(cfg):
+def collect(cfg, registry=None, with_official=False):
     """활성 소스 전체를 수집·정규화 후 소스 간 중복 병합.
 
-    반환: (items, results). results는 소스별 SourceResult(공고 0건 vs 수집 실패 구분용).
+    반환: (items, results, official_results).
+    results 는 소스별 SourceResult, official_results 는 회사별 CompanyFetchResult다.
+    둘 다 "공고 0건"과 "수집 실패"를 구분하기 위해 존재한다.
     한 소스가 실패해도 나머지 소스는 계속 수집한다.
     """
     items = []
     results = []
+    official_results = []
     for sc in iter_source_configs(cfg):
         t = sc.get("type", DEFAULT_SOURCE)
         adapter = get_source(t)
@@ -75,14 +82,22 @@ def collect(cfg):
             res = SourceResult(t, [], ok=False, error=str(e)[:200])
         results.append(res)
         items += res.items
+    if with_official:
+        off_items, official_results = collect_official(registry, cfg=cfg)
+        items += off_items
+
+    # 회사 표기가 소스마다 달라서(예시알파 / Example Alpha) canonical id 를 먼저 붙인다.
+    # 안 붙이면 같은 공고가 플랫폼과 공식에서 각각 한 번씩 나온다.
+    canonicalize(items, registry)
+
     before = len(items)
     merged = dedup_across_sources(items)
     if before != len(merged):
         log(f"  · 소스 간 중복 병합: {before} → {len(merged)}건")
-    return merged, results
+    return merged, results, official_results
 
 
 def fetch_listings(cfg):
     """하위호환 표면: 병합된 item 리스트만 반환."""
-    items, _ = collect(cfg)
+    items, _r, _o = collect(cfg)
     return items

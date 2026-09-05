@@ -17,6 +17,20 @@ downstream(점수·노트·대시보드)은 소스별 raw 응답 스키마를 �
     careerMax     int | None
     _deadline     str | None     소스가 마감일을 네이티브로 주면 채움("YYYY-MM-DD" | "상시")
 
+소스가 상황에 따라 채우는 키:
+    _canonical_company str       감시 대상 기업 id. 소스마다 회사 표기가 달라서
+                                 ("예시알파" / "Example Alpha") dedup 이 이 값으로 비교한다.
+                                 radar/dedup.py::canonicalize 가 붙이고,
+                                 공식 소스는 처음부터 직접 넣는다.
+    _depth_synthetic bool        depth 필드를 소스가 준 게 아니라 **우리가 지어냈다**는 표시.
+                                 지금은 platform_b 가 넣는다(서버단 카테고리로 이미
+                                 필터됐다는 이유로 config 값을 채워 넣기 때문).
+                                 직무 필터(targeting)가 이 값을 믿지 않게 한다.
+
+공식 채용소스(radar/sources/official/)만 채우는 키:
+    _created_at   str | None     등록일. 목록에서 이미 받아 상세 조회가 불필요할 때.
+    _detail_url   str | None     공고 상세 URL. fetch_detail 이 redirectUrl 로 넘긴다.
+
 공통 detail dict:
     createdAt     str | None     등록 시각(ISO). 신규 판정 기준.
     content       JSON | None    TipTap 문서(1차 소스)
