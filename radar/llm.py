@@ -18,14 +18,20 @@ LLM_SYS = (
 # claude CLI를 볼트 밖 중립 폴더에서 실행 → 볼트 CLAUDE.md/스킬 미로드로 오버헤드 감소
 CLI_CWD = os.path.join(tempfile.gettempdir(), "job_watcher_cli")
 
-# 구조화 응답(requirements 배열)은 예전 한 줄 총평보다 길다. 사용자가 config 에
-# 800 같은 옛 값을 두고 있으면 응답이 상한에 걸려 통째로 버려진다.
-# 실측: 요구사항 9건 + 전략 4개짜리 한국어 응답이 2000 토큰을 넘겨 실패했다.
+# 구조화 응답(requirements 배열)은 예전 한 줄 총평보다 길다. 옛 config 값(800 등)을
+# 그대로 쓰면 응답이 상한에 걸려 버려지므로 api 경로에서 바닥값을 강제한다.
+# 실측: 요구사항 9~11건짜리 한국어 응답이 2000 토큰을 넘겼다.
 # 상한은 초과분을 막는 장치일 뿐 미리 과금되지 않으므로 넉넉히 잡는다.
 STRUCTURED_MIN_TOKENS = 6000
 
-# claude CLI 는 출력 토큰 상한을 인자로 받지 않고 이 환경변수로 받는다.
-# 넘으면 잘린 JSON 대신 명시적 오류를 돌려주므로(= 폴백 경로로 감), 조용한 파손이 없다.
+# CLI 는 출력 토큰 상한을 인자가 아니라 이 환경변수로 받는다. 그런데 **여기에 상한을
+# 걸면 안 된다.** 실측(2026-09-05): 상한에 걸리면 오류를 내는 게 아니라 다음 턴으로
+# 이어 쓰고(num_turns=2) `result` 에는 이어쓴 뒷조각만 남는다. rc=0 이라 성공처럼
+# 보이는데 JSON 앞부분이 없어 파싱이 실패한다. 상한 없이는 한 턴에 다 나온다.
+#   상한 1500 → num_turns=2, result 616자(JSON 중간부터 시작), 파싱 실패
+#   상한 없음 → num_turns=1, result 3749자, 정상
+# 그래서 값을 넣는 대신 **부모 환경에 설정돼 있으면 지운다**(쉘 설정이 새어들면
+# 같은 증상이 재현되므로).
 CLI_MAX_TOKENS_ENV = "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
 
 
@@ -166,14 +172,14 @@ def _score_api(engine, max_tokens, prompt):
     return extract_json(txt)
 
 
-def _score_cli(engine, max_tokens, prompt):
+def _score_cli(engine, prompt):
     import subprocess  # noqa: WPS433
     os.makedirs(CLI_CWD, exist_ok=True)
     full = LLM_SYS + "\n\n" + prompt
-    # 상한은 CLI 인자가 아니라 환경변수로만 전달된다. 부모 환경을 물려주되 이 값은
-    # 덮어쓴다(부모 쉘에 낮은 값이 설정돼 있으면 그게 이 실행에 새어 들어오므로).
+    # 출력 토큰 상한을 걸지 않는다(위 CLI_MAX_TOKENS_ENV 주석 참고).
+    # 부모 환경에 값이 있으면 지운다.
     env = dict(os.environ)
-    env[CLI_MAX_TOKENS_ENV] = str(max_tokens)
+    env.pop(CLI_MAX_TOKENS_ENV, None)
     proc = subprocess.run(
         [engine["exe"], "-p", "--output-format", "json", "--model", engine["model"]],
         input=full, capture_output=True, text=True, encoding="utf-8",
@@ -186,14 +192,22 @@ def _score_cli(engine, max_tokens, prompt):
         raise RuntimeError(f"claude CLI 실패(rc={proc.returncode}): {why[:300]}")
     envelope = json.loads(proc.stdout)
     if envelope.get("is_error") or envelope.get("subtype") != "success":
-        raise RuntimeError(f"claude CLI 오류 응답: {str(envelope)[:200]}")
-    return extract_json(envelope["result"])
+        raise RuntimeError(f"CLI 오류 응답: {str(envelope)[:200]}")
+    try:
+        return extract_json(envelope.get("result") or "")
+    except ValueError as e:
+        turns = envelope.get("num_turns")
+        if turns and turns > 1:
+            # 응답이 여러 턴으로 쪼개졌다 = 출력 상한에 걸렸다는 뜻. 원인을 못 박아둔다.
+            raise RuntimeError(
+                f"응답이 {turns}턴으로 쪼개져 뒷부분만 돌아왔습니다"
+                f"(출력 토큰 상한 의심). {e}") from e
+        raise
 
 
 def llm_score(engine, max_tokens, profile_text, item, detail_text):
     prompt = build_prompt(profile_text, item, detail_text)
-    # config 값이 구조화 응답을 담기엔 작으면 올려 쓴다(자르면 JSON 자체가 깨진다).
-    max_tokens = max(int(max_tokens or 0), STRUCTURED_MIN_TOKENS)
     if engine["provider"] == "api":
-        return _score_api(engine, max_tokens, prompt)
-    return _score_cli(engine, max_tokens, prompt)
+        # config 값이 구조화 응답을 담기엔 작으면 올려 쓴다(상한에 걸리면 통째로 버려진다).
+        return _score_api(engine, max(int(max_tokens or 0), STRUCTURED_MIN_TOKENS), prompt)
+    return _score_cli(engine, prompt)

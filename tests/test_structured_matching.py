@@ -6,11 +6,14 @@
 계산 가능한 값으로 좁혀지는가"를 본다.
 """
 
+import json
+import os
 import unittest
 
 from tests.helpers import make_item
 
 from radar import matching
+from radar import llm as llm_mod
 from radar.llm import build_prompt, extract_json
 from radar.models import build_match
 
@@ -299,6 +302,58 @@ class ExtractJsonTest(unittest.TestCase):
     def test_nested_braces_survive(self):
         out = extract_json('{"requirements": [{"requirement": "x"}], "score": 70}')
         self.assertEqual(len(out["requirements"]), 1)
+
+
+class CliTokenCapTest(unittest.TestCase):
+    """CLI 경로에 출력 토큰 상한을 걸지 않는다는 계약.
+
+    실측(2026-09-05): 상한에 걸리면 CLI 가 오류 대신 다음 턴으로 이어 쓰고
+    result 에 뒷조각만 남긴다(rc=0, num_turns=2). 성공처럼 보이는데 JSON 앞부분이
+    없어 파싱이 실패한다. 그래서 값을 넣지 않고, 부모 환경에 있으면 지운다.
+    """
+
+    def _run(self, parent_env, envelope, returncode=0):
+        seen = {}
+
+        class Proc:
+            def __init__(self):
+                self.returncode = returncode
+                self.stdout = json.dumps(envelope)
+                self.stderr = ""
+
+        def fake_run(cmd, **kw):
+            seen["env"] = kw.get("env")
+            return Proc()
+
+        import subprocess
+        real_run, real_environ = subprocess.run, os.environ
+        try:
+            subprocess.run = fake_run
+            os.environ = dict(parent_env)
+            out = llm_mod._score_cli({"exe": "claude", "model": "sonnet"}, "프롬프트")
+        finally:
+            subprocess.run, os.environ = real_run, real_environ
+        return out, seen["env"]
+
+    def test_cap_env_is_stripped_from_child(self):
+        env_in = {"PATH": "x", llm_mod.CLI_MAX_TOKENS_ENV: "1500"}
+        out, env_out = self._run(
+            env_in, {"subtype": "success", "result": '{"score": 80}', "num_turns": 1})
+        self.assertNotIn(llm_mod.CLI_MAX_TOKENS_ENV, env_out)
+        self.assertEqual(env_out["PATH"], "x")  # 나머지 환경은 물려준다
+        self.assertEqual(out["score"], 80)
+
+    def test_split_response_names_the_cause(self):
+        # 뒷조각만 온 응답. 원인을 모른 채 "JSON 못 찾음"으로 끝나면 안 된다.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._run({}, {"subtype": "success", "num_turns": 2,
+                           "result": '족"], "summary": "뒷조각"'})
+        self.assertIn("2턴", str(ctx.exception))
+        self.assertIn("상한", str(ctx.exception))
+
+    def test_single_turn_parse_failure_keeps_value_error(self):
+        with self.assertRaises(ValueError):
+            self._run({}, {"subtype": "success", "num_turns": 1, "result": "JSON 없음"})
 
 
 class PromptContractTest(unittest.TestCase):
