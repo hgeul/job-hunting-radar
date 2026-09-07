@@ -7,7 +7,7 @@ import datetime as dt
 from radar import pipeline
 from radar import health as health_mod
 from radar.config import load_config, load_profile
-from radar.models import match_card
+from radar.models import match_card, notify_eligible
 from radar.notify import send_telegram, telegram_test
 from radar.output import write_dashboard, write_note
 from radar.settings import load_dotenv
@@ -256,7 +256,7 @@ def main(argv=None):
     notify = cfg["scoring"]["notify_threshold"]
     log(f"=== 신규 매칭 (알림문턱 {notify}) ===")
     for m in matches[:12]:
-        flag = "🔥" if m["score"] >= notify else "  "
+        flag = "🔥" if notify_eligible(m, notify) else "  "
         tg = m.get("target")
         mark = f" 🎯{tg['tier']}" if tg else ""
         log(f"  {flag} {m['score']:>5}{mark} | {m['company']} | {m['title'][:34]}")
@@ -283,7 +283,7 @@ def main(argv=None):
     save_seen(cfg, seen)
     dash = write_dashboard(cfg, seen)
     send_telegram(cfg, matches, stats, path)
-    hot = sum(1 for m in matches if m["score"] >= notify)
+    hot = sum(1 for m in matches if notify_eligible(m, notify))
     tgt = len(result.targets())
     tgt_s = f", 🎯{tgt}건" if tgt else ""
     log(f"노트 작성: {path} (수록 {n}건, 🔥{hot}건{tgt_s})")

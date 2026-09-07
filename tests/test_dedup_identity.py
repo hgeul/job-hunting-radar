@@ -102,13 +102,18 @@ class TestCanonicalMatching(unittest.TestCase):
         out = dedup_across_sources(canonicalize([a, b], r))
         self.assertEqual(len(out), 2)
 
-    def test_same_source_duplicates_are_kept(self):
-        # 같은 소스 안의 동명 공고는 서로 다른 자리다. id로 이미 구분된다.
+    def test_same_source_reposts_are_merged(self):
+        # 예전 계약은 "같은 소스 동명 공고는 서로 다른 자리"였다. 실측(2026-09-07)에서
+        # 뒤집혔다: 614건 중 87건이 회사·제목·경력·근무지가 전부 같은 재게시였고,
+        # 하나는 33건짜리였다. 접지 않으면 중복마다 LLM 을 부르고 중복 알림이 간다.
         r = reg(("alpha", "예시알파", ["Example Alpha"]))
-        a = item("1", "platform", "예시알파", "백엔드 개발자")
-        b = item("2", "platform", "예시알파", "백엔드 개발자")
+        a = item("1", "platform", "예시알파", "백엔드 개발자",
+                 careerMin=3, careerMax=7, regions=["서울"])
+        b = item("2", "platform", "예시알파", "백엔드 개발자",
+                 careerMin=3, careerMax=7, regions=["서울"])
         out = dedup_across_sources(canonicalize([a, b], r))
-        self.assertEqual(len(out), 2)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["id"], "1")  # 먼저 온 id 유지
 
     def test_empty_registry_is_noop(self):
         a = item("1", "platform", "예시알파", "백엔드")
@@ -134,12 +139,44 @@ class TestSameTitleDifferentJobs(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["id"], "1")
 
-    def test_same_source_same_title_both_survive(self):
+    def test_same_title_different_career_survives(self):
+        # 제목이 같아도 요구 경력이 다르면 다른 공고다. 실측: 제목만으로 접으면
+        # 42개 그룹에서 서로 다른 메타가 합쳐졌다(경력 3~7 과 5~15 처럼).
         r = reg(("alpha", "예시알파", ["Example Alpha"]))
         out = dedup_across_sources(canonicalize([
-            item("1", "greetinghr", "Example Alpha", "백엔드 개발자"),
-            item("2", "greetinghr", "Example Alpha", "백엔드 개발자")], r))
+            item("1", "greetinghr", "Example Alpha", "백엔드 개발자",
+                 careerMin=3, careerMax=7),
+            item("2", "greetinghr", "Example Alpha", "백엔드 개발자",
+                 careerMin=5, careerMax=15)], r))
         self.assertEqual(len(out), 2)
+
+    def test_same_title_different_region_survives(self):
+        r = reg(("alpha", "예시알파", ["Example Alpha"]))
+        out = dedup_across_sources(canonicalize([
+            item("1", "platform", "예시알파", "백엔드 개발자", regions=["서울"]),
+            item("2", "platform", "예시알파", "백엔드 개발자", regions=["부산"])], r))
+        self.assertEqual(len(out), 2)
+
+    def test_parentheses_distinguish_postings(self):
+        # 느슨한 키(norm_key)는 괄호를 지운다. 재게시 판정에 그걸 쓰면 서로 다른
+        # 공고가 뭉개진다. 실측: 한 증권사가 (Market Data)·(Trading Platform)·(검색)
+        # 등 11건을 올렸는데 느슨한 키로는 전부 하나가 된다.
+        rows = [item("1", "platform", "예시알파", "Backend Engineer (Market Data)"),
+                item("2", "platform", "예시알파", "Backend Engineer (Trading)"),
+                item("3", "platform", "예시알파", "Backend Engineer (검색)")]
+        out = dedup_across_sources([dict(r) for r in rows])
+        self.assertEqual(len(out), 3)
+        self.assertEqual(norm_key(rows[0]), norm_key(rows[1]))  # 느슨한 키는 같다
+
+    def test_ambiguous_loose_key_blocks_cross_source_merge(self):
+        # 느슨한 키 하나에 서로 다른 공고가 여럿 걸려 있으면 어느 쪽에 붙일지
+        # 정할 근거가 없다. 잘못 합치느니 중복으로 둔다(PLAN 25절).
+        r = reg(("alpha", "예시알파", ["Example Alpha"]))
+        out = dedup_across_sources(canonicalize([
+            item("1", "platform", "예시알파", "Backend Engineer (Market Data)"),
+            item("2", "platform", "예시알파", "Backend Engineer (Trading)"),
+            item("3", "greetinghr", "Example Alpha", "Backend Engineer")], r))
+        self.assertEqual(len(out), 3)
 
 
 if __name__ == "__main__":

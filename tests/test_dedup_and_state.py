@@ -25,9 +25,15 @@ class TestNormKey(unittest.TestCase):
 
 
 class TestDedup(unittest.TestCase):
-    def test_same_source_kept_apart(self):
-        # 같은 소스 안에서는 병합하지 않는다(id로 이미 구분됨).
+    def test_same_source_reposts_merged(self):
+        # 회사·제목·경력·근무지가 전부 같으면 같은 공고의 재게시로 본다.
         items = [make_item(id="1"), make_item(id="2")]
+        out = jw._dedup(items)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["id"], "1")
+
+    def test_same_source_different_career_kept_apart(self):
+        items = [make_item(id="1", careerMin=3), make_item(id="2", careerMin=6)]
         self.assertEqual(len(jw._dedup(items)), 2)
 
     def test_cross_source_merged(self):

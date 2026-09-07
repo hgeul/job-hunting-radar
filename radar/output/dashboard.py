@@ -142,8 +142,13 @@ def write_dashboard(cfg, seen):
             dsort = 100001
         rows.append({
             "score": c.get("score", 0),
-            "hot": c.get("score", 0) >= notify,
-            "verdict": c.get("verdict") or ("⚙️LLM미검증" if not c.get("llm") else "-"),
+            # 결격 제외 공고는 강조하지 않는다(노트·텔레그램과 같은 기준).
+            "hot": (c.get("score", 0) >= notify
+                    and c.get("recommendation") != "SKIP"),
+            # scored 는 Phase 6 부터, llm 은 그 이전 카드가 쓰던 키다. 둘 다 본다
+            # (state 는 seen_retention_days 만큼 옛 카드를 들고 있다).
+            "verdict": c.get("verdict") or (
+                "-" if (c.get("scored") or c.get("llm")) else "⚙️ 근거 미확보"),
             "deadline": dlabel, "dstate": dstate, "dsort": dsort,
             "urgent": dstate == "date" and ddays is not None and 0 <= ddays <= 3,
             "expired": dstate == "date" and ddays is not None and ddays < 0,

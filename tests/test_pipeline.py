@@ -63,8 +63,19 @@ class FakeDeps(pipeline.Deps):
             if isinstance(out, Exception):
                 raise out
             return out
-        return {"score": 90, "verdict": "강력추천", "reasons": ["r"], "gaps": [],
-                "one_liner": "ok", "deadline": "상시", "strategy": ["s"]}
+        return structured_llm()
+
+
+def structured_llm(full=1, none=0):
+    """구조화 LLM 응답 하나. FULL/NONE 개수로 적합도를 조절한다."""
+    def row(n, match):
+        return {"category": "language", "importance": "REQUIRED",
+                "requirement": f"요구 {n}", "candidate_evidence": "근거 문장",
+                "match": match, "confidence": "HIGH"}
+    reqs = [row(n, "FULL") for n in range(full)]
+    reqs += [row(full + n, "NONE") for n in range(none)]
+    return {"requirements": reqs, "hard_blockers": [], "strengths": ["r"],
+            "risks": [], "summary": "ok", "deadline": "상시", "strategy": ["s"]}
 
 
 def rich(created, **kw):
@@ -168,7 +179,7 @@ class TestLlmStage(unittest.TestCase):
         deps = FakeDeps(items, {"a": rich(days_ago(1))})
         res = pipeline.run(make_config(), {}, "P", window=3, no_llm=True, deps=deps)
         m = res.matches[0]
-        self.assertIsNone(m["llm"])
+        self.assertIsNone(m["fit_score"])
         self.assertEqual(m["score"], m["rule"])
         self.assertEqual(res.stats["llm_note"], "--no-llm 플래그")
         self.assertEqual(deps.calls["llm"], [])
@@ -179,7 +190,7 @@ class TestLlmStage(unittest.TestCase):
                         llm={"a": RuntimeError("boom")})
         res = pipeline.run(make_config(), {}, "P", window=3, deps=deps)
         m = res.matches[0]
-        self.assertIsNone(m["llm"])
+        self.assertIsNone(m["fit_score"])
         self.assertEqual(m["score"], m["rule"])
         self.assertEqual(res.stats["llm_scored"], 0)
 
@@ -191,7 +202,7 @@ class TestLlmStage(unittest.TestCase):
         deps = FakeDeps(items, details)
         res = pipeline.run(cfg, {}, "P", window=3, deps=deps)
         self.assertEqual(len(deps.calls["llm"]), 2)
-        self.assertEqual(sum(1 for m in res.matches if m["llm"] is not None), 2)
+        self.assertEqual(sum(1 for m in res.matches if m["fit_score"] is not None), 2)
         self.assertEqual(len(res.matches), 5)
 
 
@@ -251,9 +262,8 @@ class TestOrdering(unittest.TestCase):
     def test_matches_sorted_by_score_desc(self):
         items = [make_item(id=f"i{n}", title="Java Spring 백엔드") for n in range(4)]
         details = {f"i{n}": rich(days_ago(1)) for n in range(4)}
-        llm = {f"i{n}": {"score": n * 10, "verdict": "보통", "reasons": [], "gaps": [],
-                         "one_liner": "", "deadline": "상시", "strategy": []}
-               for n in range(4)}
+        # FULL 개수를 다르게 해 적합도가 서로 다르게 나오도록.
+        llm = {f"i{n}": structured_llm(full=n, none=3 - n) for n in range(4)}
         res = pipeline.run(make_config(), {}, "P", window=3,
                            deps=FakeDeps(items, details, llm=llm))
         scores = [m["score"] for m in res.matches]

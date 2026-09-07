@@ -3,6 +3,7 @@
 
 import os
 
+from radar.models import notify_eligible
 from radar.settings import PLATFORM_NAME
 from radar.util import http_post_json, http_post_multipart, log
 
@@ -27,7 +28,12 @@ def send_telegram(cfg, matches, stats=None, note_path=None):
     threshold = tg.get("threshold", 50)
     # target 공고는 점수 문턱을 건너뛴다. 지정한 회사에서 공고가 났다는 사실
     # 자체가 알릴 가치이고, 직무 필터는 이미 통과한 것들이다.
-    hits = [m for m in matches if m["score"] >= threshold or m.get("target")]
+    # 노출 판단은 노트·CLI 와 같은 함수를 쓴다. 여기만 따로 두면 노트에는 🔥 가
+    # 없는데 텔레그램으로는 나가는 어긋남이 생긴다.
+    # 감시 대상 기업은 점수가 낮아도 보낸다(그게 감시하는 이유다). 다만 결격은 뺀다.
+    hits = [m for m in matches
+            if notify_eligible(m, threshold)
+            or (m.get("target") and m.get("recommendation") != "SKIP")]
     if not hits:
         log(f"  · 텔레그램 skip: ≥{threshold}점 신규 없음")
         return
@@ -43,7 +49,7 @@ def send_telegram(cfg, matches, stats=None, note_path=None):
     lines = [f"🎯 {who}{PLATFORM_NAME} 매칭 {len(hits)}건 (≥{threshold}점{span}{tgt_s})"]
     for m in hits[:8]:
         tg = m.get("target")
-        flag = f"🎯{tg['tier']}" if tg else ("🔥" if m["score"] >= notify else "•")
+        flag = f"🎯{tg['tier']}" if tg else ("🔥" if notify_eligible(m, notify) else "•")
         lines.append(f"{flag} {m['score']}점 · {m['company']} — {m['title']}")
     if len(hits) > 8:
         lines.append(f"…외 {len(hits) - 8}건")

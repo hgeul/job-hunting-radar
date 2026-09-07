@@ -81,7 +81,6 @@ def build_prompt(profile_text, item, detail_text):
         f'"strengths": ["이 공고 기준 강점 최대{MAX_BULLETS}"], '
         f'"risks": ["부족/리스크 최대{MAX_BULLETS}"], '
         '"summary": "<한 줄 총평>", '
-        '"score": <0-100 정수>, "verdict": "<강력추천|추천|보통|낮음>", '
         '"deadline": "<지원 마감일: 구체 날짜면 YYYY-MM-DD, 상시채용/채용시 마감이면 \'상시\', 본문에 없으면 \'미상\'>", '
         '"strategy": ["지원·합격 전략 2~4개(구체적으로): 서류에서 강조할 이력·키워드, '
         '이력서/자기소개서 각색 포인트, 면접 대비 포인트, risks 보완·프레이밍 방법"]}'

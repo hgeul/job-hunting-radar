@@ -4,8 +4,21 @@
 import datetime as dt
 import os
 
-from radar.models import deadline_info
+from radar.models import deadline_info, notify_eligible, rec_rank
 from radar.settings import HERE, PLATFORM_NAME, source_badge
+
+_AXIS_LABEL = {"required": "필수", "preferred": "우대", "career": "경력",
+               "tech": "기술", "preference": "선호"}
+
+
+def _axis_summary(fit):
+    """적합도 축별 내역 한 줄. 계산에 실제로 쓴 축만 낸다."""
+    if not fit:
+        return "-"
+    parts = fit.get("parts") or {}
+    used = fit.get("weights_used") or []
+    return " · ".join(f"{_AXIS_LABEL.get(k, k)} {round(parts[k] * 100)}"
+                      for k in _AXIS_LABEL if k in used and parts.get(k) is not None)
 
 
 def write_note(cfg, matches, stats):
@@ -19,8 +32,9 @@ def write_note(cfg, matches, stats):
     # target 공고는 점수 문턱을 건너뛴다(cli의 notified 기준과 반드시 같아야 한다.
     # 어긋나면 notified 처리됐는데 노트에 안 실려 영영 못 보는 공고가 생긴다).
     shown = [m for m in matches if m["score"] >= minsc or m.get("target")]
-    # target 우선, 그 다음 점수순.
-    shown.sort(key=lambda m: (0 if m.get("target") else 1, -m["score"]))
+    # target 우선 → 추천 순위 → 점수순. 추천을 정렬에 넣지 않으면 결격으로 제외된
+    # 공고가 점수만 높아 맨 위에 앉는다(점수는 결격을 모른다).
+    shown.sort(key=lambda m: (0 if m.get("target") else 1, rec_rank(m), -m["score"]))
 
     lines = []
     person = cfg.get("name", "")
@@ -81,8 +95,8 @@ def write_note(cfg, matches, stats):
             lines.append("| 점수 | 판정 | 마감 | 회사 | 공고 | 경력 | 지역 |")
             lines.append("|---:|:--:|:--:|---|---|:--:|:--:|")
         for m in shown:
-            flag = "🔥" if m["score"] >= notify else ""
-            verdict = m.get("verdict") or ("⚙️ LLM 미검증" if m.get("llm") is None else "-")
+            flag = "🔥" if notify_eligible(m, notify) else ""
+            verdict = m.get("verdict") or ("⚙️ 근거 미확보" if m.get("fit_score") is None else "-")
             dlabel, ddays, dstate = deadline_info(m.get("deadline"))
             dl_cell = f"⏰{dlabel}" if (dstate == "date" and ddays is not None and ddays <= 3) else dlabel
             tg = m.get("target")
@@ -95,7 +109,7 @@ def write_note(cfg, matches, stats):
         lines.append("---")
         lines.append("")
         for m in shown:
-            flag = " 🔥" if m["score"] >= notify else ""
+            flag = " 🔥" if notify_eligible(m, notify) else ""
             sb = source_badge(m.get("sources"))
             sb = f"  {sb}" if sb else ""
             tg = m.get("target")
@@ -116,10 +130,22 @@ def write_note(cfg, matches, stats):
             dlabel, ddays, dstate = deadline_info(m.get("deadline"))
             urgent = " ⏰**마감임박**" if (dstate == "date" and ddays is not None and 0 <= ddays <= 3) else ""
             lines.append(f"- 🗓️ 서류 마감: {dlabel}{urgent}")
-            lines.append(
-                f"- 규칙점수 {m['rule']}"
-                + (f" → LLM {m['llm']}" if m.get("llm") is not None else "")
-            )
+            fit = m.get("fit")
+            if m.get("fit_score") is not None:
+                # 점수가 어디서 왔는지 보이게 축을 같이 낸다. 산식이 코드에 있으니
+                # 이 줄만 보고도 "왜 이 점수인가"를 되짚을 수 있어야 한다.
+                lines.append(f"- 규칙점수 {m['rule']} → **적합도 {m['fit_score']}** "
+                             f"({_axis_summary(fit)})")
+                cov = (fit or {}).get("required_coverage")
+                if cov is not None and (fit or {}).get("required_total"):
+                    lines.append(f"- 필수 요구사항 {fit['required_total']}건 중 "
+                                 f"{fit['required_known']}건 판정"
+                                 + (f" · 근거 없어 강등 {m['demoted']}건"
+                                    if m.get("demoted") else ""))
+            else:
+                lines.append(f"- 규칙점수 {m['rule']} (요구사항 근거 미확보로 적합도 미산출)")
+            if m.get("recommendation_why"):
+                lines.append("- 판정 사유: " + " / ".join(m["recommendation_why"]))
             if m.get("one_liner"):
                 lines.append(f"- 총평: {m['one_liner']}")
             if m.get("reasons"):
@@ -131,12 +157,20 @@ def write_note(cfg, matches, stats):
             # 여기 싣는 건 blocker 의 detail 뿐이다. 요구사항별 근거(이력 원문 인용)는
             # 텔레그램으로 첨부되어 나가므로 노트에 싣지 않는다.
             if m.get("hard_blockers"):
-                lines.append("- 🚫 **결격 후보**: "
+                lines.append("- 🚫 **결격**: "
                              + " / ".join(b["detail"] for b in m["hard_blockers"]))
-                lines.append("    - LLM 이 공고에서 뽑은 후보입니다. 점수에는 아직 "
-                             "반영하지 않으니 공고 원문을 직접 확인하세요.")
-            # 알림문턱(기본 60) 넘는 유망 공고엔 지원·합격 전략 코멘트
-            if m["score"] >= notify and m.get("strategy"):
+                lines.append("    - 결격이 있으면 점수와 무관하게 제외로 판정합니다. "
+                             "공고 원문을 직접 확인하세요.")
+            if m.get("blockers_rejected"):
+                # 정책이 몇 건을 걸렀는지만 알린다. LLM 이 쓴 detail 원문은 싣지 않는다.
+                # 반려 사유 대부분이 경력 관련이라 그 문장에 이력 정보가 섞이기 쉽고,
+                # 이 노트는 텔레그램으로 첨부되어 나간다.
+                why = sorted({b["reject"] for b in m["blockers_rejected"]})
+                lines.append(f"- 참고: 결격 후보 {len(m['blockers_rejected'])}건을 "
+                             f"결격 아님으로 판단 ({' / '.join(why)})")
+            # 알림문턱(기본 60) 넘는 유망 공고엔 지원·합격 전략 코멘트.
+            # 결격 공고에는 달지 않는다(제외 판정 옆에 지원 전략이 붙으면 모순이다).
+            if notify_eligible(m, notify) and m.get("strategy"):
                 lines.append(f"- 🎯 **지원·합격 전략**")
                 for s in m["strategy"]:
                     lines.append(f"    - {s}")

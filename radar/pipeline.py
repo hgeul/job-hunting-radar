@@ -15,7 +15,7 @@ from radar import llm as llm_mod
 from radar import sources as sources_mod
 from radar.jd import created_age_days, detail_to_text
 from radar.models import build_match
-from radar.scoring import discovery_qualified
+from radar.scoring import company_excluded, discovery_qualified
 from radar.targeting import EMPTY_REGISTRY
 from radar.util import log
 
@@ -98,12 +98,21 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
         "discovery_candidates": 0, "target_candidates": 0, "target_fresh": 0,
         "target_near_misses": {}, "targets_error": registry_error,
         "target_role_dropped": 0, "target_role_dropped_samples": [],
+        "company_excluded": 0, "company_excluded_samples": [],
     }
 
     # 두 레이더가 각자 후보를 고르고, 같은 공고를 둘 다 잡으면 하나로 합친다
     # (중복 알림 방지). Target 은 규칙 문턱을 건너뛰지만 직무 필터는 받는다.
     prelim = []
     for it in listings:
+        # 제외 회사는 state 에도 넣지 않는다(안 볼 공고로 상태를 불리지 않는다).
+        if company_excluded(it, cfg["filter"]):
+            stats["company_excluded"] += 1
+            if len(stats["company_excluded_samples"]) < 5:
+                stats["company_excluded_samples"].append(
+                    f"{(it.get('company') or {}).get('name', '?')} / "
+                    f"{it.get('title', '?')}")
+            continue
         rid = it["id"]
         seen.setdefault(rid, {"first_seen": today, "title": it.get("title")})
         disc_ok, rsc, _parts = discovery_qualified(it, cfg)
@@ -130,6 +139,11 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
             continue
         stats["rule_pass"] += 1  # 기존 노트 문구가 쓰는 값이라 이름을 유지한다
         prelim.append((it, rsc, company))
+    if stats["company_excluded"]:
+        log(f"  · 제외 회사 공고 {stats['company_excluded']}건 건너뜀 "
+            f"(filter.exclude_companies)")
+        for smp in stats["company_excluded_samples"][:3]:
+            log(f"      {smp[:70]}")
     prelim.sort(key=lambda x: x[1], reverse=True)
     if want_target:
         log(f"후보 {stats['rule_pass']}건 "
@@ -238,7 +252,7 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
             stats["llm_scored"] += 1
         except Exception as e:  # noqa: BLE001
             log(f"  ! LLM 실패({rid[:8]}): {e}")
-        m = build_match(it, rsc, detail, age, llm_out, jd_source, company)
+        m = build_match(it, rsc, detail, age, llm_out, jd_source, company, cfg)
         # 구조화 매칭을 실제로 받아온 건수. LLM 이 응답은 했는데 requirements 가
         # 비면 여기서 차이가 드러난다(프롬프트·토큰 예산 회귀 감지용).
         if m.get("structured"):
@@ -263,7 +277,7 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
     # 예산 초과분: 규칙 점수만
     for it, rsc, detail, age, company in rest:
         matches.append(build_match(it, rsc, detail, age, None,
-                                   "platform" if detail else None, company))
+                                   "platform" if detail else None, company, cfg))
 
     matches.sort(key=lambda m: m["score"], reverse=True)
     return RunResult(matches, seen, stats, source_results,

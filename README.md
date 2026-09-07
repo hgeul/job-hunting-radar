@@ -157,7 +157,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."   # Windows: setx ANTHROPIC_API_KEY "..."
 
 ### 공통
 
-- `llm.max_calls_per_run`이 1회 실행 채점 상한. 초과분은 규칙 점수만 매겨 노트에 `⚙️ LLM 미검증` 표시(LLM이 안 본 공고 = 규칙 점수만, 신뢰도 낮음).
+- `llm.max_calls_per_run`이 1회 실행 상한. 초과분과 요구사항을 못 받아온 공고는 규칙 점수만 매겨 노트에 `⚙️ 근거 미확보` 표시(적합도를 못 낸 공고 = 규칙 점수만, 신뢰도 낮음).
 - 어느 방식도 준비 안 되면 노트 상단에 "LLM 생략" 배너가 뜨고 규칙 점수로만 채운다.
 
 ## 원본 JD 크롤 (enrich)
@@ -361,10 +361,15 @@ schtasks /Create /TN "job-hunting-radar" /SC DAILY /ST 09:00 ^
 | `search.filters` | 채용 플랫폼 사이트 필터와 동일(직무·지역·경력·고용형태·학력·기업규모). 값은 플랫폼 표기 그대로 |
 | `search.new_within_days` | 신규로 볼 등록 경과일 기본값(기본 7). 실행 시 `--days N`으로 덮어씀 |
 | `filter.exclude_title_keywords` | 제목에 들어가면 제외(프론트·모바일·QA 등) |
+| `filter.exclude_companies` | 이 회사 공고는 아예 안 봄(회사명 부분일치). 구인광고를 대량 재게시하는 집계·파견 업체용. 자동 판정은 안 하니 직접 적는다 |
 | `profile.career_years` | 연차. 경력 매칭 기준 |
 | `profile.tech_primary/secondary` | 제목 가점 기술 키워드(소문자) |
 | `scoring.rule_threshold` | 이 규칙점수 미만은 LLM·노트 제외(기본 45) |
-| `scoring.notify_threshold` | 🔥 강조 + 지원·합격 전략 코멘트 문턱(기본 60) |
+| `scoring.notify_threshold` | 🔥 강조 + 전략 코멘트 문턱(기본 60). **적합도를 산출한 공고에서는 추천이 이기고 이 값은 폴백이다** |
+| `scoring.fit.weights` | 적합도 축별 비중(필수 55 · 우대 15 · 경력 10 · 기술 10 · 선호 10). 데이터 없는 축은 빼고 재정규화 |
+| `scoring.fit.thresholds` | 점수 → 추천(강력추천/추천/검토/보류/제외) 경계. "이상" 기준 |
+| `scoring.fit.min_required_coverage` / `min_required_rows` | 근거가 얇으면 추천을 "검토"로 눌러 사람이 보게 하는 기준(판정 비율·요구사항 건수) |
+| `scoring.fit.career_review_gap` / `career_skip_gap` | 공고가 내 경력보다 더 요구하는 연수. 각각 강등·제외 기준 |
 | `output.min_score_in_note` | 노트에 실을 최소 점수 (target 공고는 예외) |
 | `targets.enabled` / `targets.file` | 감시 대상 기업 레지스트리 사용 여부·경로 |
 

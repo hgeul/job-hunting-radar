@@ -5,6 +5,8 @@
 역할이 다르다: rule은 프리필터·폴백, fit은 최종 판정.
 """
 
+import re
+
 
 def score_role(item, f):
     d2 = set(item.get("depthTwos") or [])
@@ -61,6 +63,28 @@ def score_tech_title(item, prof):
     p = sum(1 for t in prof["tech_primary"] if t in title)
     s = sum(1 for t in prof["tech_secondary"] if t in title)
     return min(1.0, 0.5 * p + 0.25 * s)
+
+
+def _norm_company(name):
+    return re.sub(r"[\s\W_]+", "", name or "").lower()
+
+
+def company_excluded(item, f):
+    """제외 회사 목록에 걸리나(부분일치).
+
+    채용 집계·파견 업체가 구인광고를 대량 재게시하는 경우가 있다.
+    실측: 한 업체가 하루 27건을 올렸는데 고유 제목이 11개뿐이었고 내용은 채용
+    포털 홍보 문구였다. 다른 회사는 제목 하나당 공고 하나다. 그런 제목은 서로
+    닮은 데가 없어 키워드로는 절반밖에 못 걸러, 회사 단위로 거른다.
+
+    제목 필터와 달리 **회사명은 사람이 직접 지정**해야 한다. 자동 판정하면
+    정상 채용대행사까지 지운다.
+    """
+    pats = f.get("exclude_companies") or []
+    if not pats:
+        return False
+    c = _norm_company((item.get("company") or {}).get("name"))
+    return any(p and _norm_company(p) in c for p in pats)
 
 
 def title_excluded(item, f):

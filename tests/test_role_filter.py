@@ -9,7 +9,9 @@
 
 import unittest
 
-from tests.helpers import make_item
+from radar.scoring import company_excluded
+
+from tests.helpers import make_config, make_item
 
 from radar.targeting import _role_norm, parse_registry
 
@@ -155,3 +157,41 @@ class TestSyntheticDepthStillIgnored(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CompanyExclusionTest(unittest.TestCase):
+    """제외 회사(구인광고를 대량 재게시하는 업체) 필터.
+
+    회사명은 전부 가상이다. 어느 회사를 제외하는지도 개인 설정이라 공개 리포에
+    실명을 남기지 않는다.
+    """
+
+    def _f(self, *names):
+        f = dict(make_config()["filter"])
+        f["exclude_companies"] = list(names)
+        return f
+
+    def test_no_list_excludes_nothing(self):
+        f = dict(make_config()["filter"])
+        f.pop("exclude_companies", None)
+        self.assertFalse(company_excluded(make_item(company="예시알파"), f))
+
+    def test_partial_match_ignores_legal_suffix(self):
+        # "예시집계" 로 적으면 "예시집계(유)" 도 걸려야 한다.
+        f = self._f("예시집계")
+        self.assertTrue(company_excluded(make_item(company="예시집계(유)"), f))
+        self.assertTrue(company_excluded(make_item(company="예시집계 유한회사"), f))
+
+    def test_other_companies_survive(self):
+        f = self._f("예시집계")
+        for c in ("예시알파", "예시베타", "예시감마"):
+            self.assertFalse(company_excluded(make_item(company=c), f), c)
+
+    def test_empty_pattern_is_ignored(self):
+        # 빈 문자열을 넣으면 모든 회사가 걸린다. 그렇게 되면 안 된다.
+        self.assertFalse(company_excluded(make_item(company="예시알파"), self._f("")))
+
+    def test_missing_company_name(self):
+        it = make_item()
+        it["company"] = {}
+        self.assertFalse(company_excluded(it, self._f("예시집계")))

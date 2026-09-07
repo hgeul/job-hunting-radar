@@ -185,37 +185,12 @@ class NormalizeStructuredTest(unittest.TestCase):
         self.assertEqual(matching.empty()["requirements"], [])
         self.assertEqual(matching.normalize_structured(None)["requirements"], [])
 
-    def test_score_coercion(self):
-        f = lambda v: matching.normalize_structured({"score": v})["score"]
-        # 88 == 88.0 이 True 라 값 비교만으로는 float 회귀를 못 잡는다. 형을 고정한다
-        # (float 로 승격되면 노트가 "88점"에서 "88.0점"으로 바뀐다).
-        self.assertIsInstance(f(88), int)
-        self.assertIsInstance(f("73"), int)
-        self.assertEqual((f(88), f("73")), (88, 73))
-        self.assertEqual(f(72.5), 72.5)
-        for bad in (None, "높음", -1, 101, True, [80], float("nan")):
-            self.assertIsNone(f(bad), repr(bad))
-        self.assertIsNone(matching.normalize_structured({})["score"])
-
-    def test_verdict_outside_enum_dropped(self):
-        self.assertEqual(matching.normalize_structured(
-            {"verdict": "추천"})["verdict"], "추천")
-        self.assertIsNone(matching.normalize_structured(
-            {"verdict": "매우추천"})["verdict"])
-
-
-class RequirementCountsTest(unittest.TestCase):
-
-    def test_cross_tab(self):
-        rows = [matching.normalize_requirement(req()),
-                matching.normalize_requirement(req(match="NONE", candidate_evidence="")),
-                matching.normalize_requirement(req(importance="우대", match="PARTIAL",
-                                                   candidate_evidence="일부 경험"))]
-        c = matching.requirement_counts(rows)
-        self.assertEqual(c["REQUIRED"]["FULL"], 1)
-        self.assertEqual(c["REQUIRED"]["NONE"], 1)
-        self.assertEqual(c["PREFERRED"]["PARTIAL"], 1)
-        self.assertEqual(matching.requirement_counts(None)["REQUIRED"]["FULL"], 0)
+    def test_score_and_verdict_are_not_read(self):
+        # Phase 6 에서 프롬프트에서 뺐다. 옛 응답에 남아 있어도 무시한다
+        # (점수·판정은 radar/fit.py 가 만든다).
+        st = matching.normalize_structured({"score": 88, "verdict": "강력추천"})
+        self.assertNotIn("score", st)
+        self.assertNotIn("verdict", st)
 
 
 class BuildMatchStructuredTest(unittest.TestCase):
@@ -237,40 +212,49 @@ class BuildMatchStructuredTest(unittest.TestCase):
         self.assertEqual(len(m["requirements"]), 1)
         self.assertIsNone(m["hard_blockers"])
 
-    def test_legacy_llm_output_still_builds(self):
+    def test_legacy_llm_output_falls_back_to_rule_score(self):
+        # 구식 응답에는 requirements 가 없다 → 적합도를 낼 수 없으니 규칙 점수.
         m = self._match({"score": 70, "verdict": "보통", "reasons": ["r"],
                          "gaps": ["g"], "one_liner": "총평"})
         self.assertFalse(m["structured"])
-        self.assertEqual(m["reasons"], ["r"])
+        self.assertEqual(m["reasons"], ["r"])  # 표시 필드는 계속 흐른다
         self.assertIsNone(m["requirements"])
-        self.assertEqual(m["score"], 70)
+        self.assertIsNone(m["fit_score"])
+        self.assertIsNone(m["recommendation"])
+        self.assertEqual(m["score"], 55.0)  # LLM 이 준 70 을 쓰지 않는다
 
     def test_no_llm_keeps_rule_score(self):
         m = self._match(None)
-        self.assertIsNone(m["llm"])
+        self.assertIsNone(m["fit_score"])
         self.assertEqual(m["score"], 55.0)
         self.assertFalse(m["structured"])
         self.assertIsNone(m["requirements"])
+        self.assertIsNone(m["recommendation"])
 
     def test_broken_llm_shape_does_not_break_match(self):
         m = self._match({"score": 60, "requirements": "배열이 아님",
                          "hard_blockers": None, "summary": None})
         self.assertFalse(m["structured"])
-        self.assertEqual(m["score"], 60)
-
-    def test_missing_score_key_falls_back_to_rule_score(self):
-        # 유효 JSON 인데 score 키만 빠진 응답으로 실행 전체가 죽으면 안 된다.
-        m = self._match({"verdict": "추천", "requirements": [req()], "summary": "ok"})
         self.assertEqual(m["score"], 55.0)
-        self.assertIsNone(m["llm"])
-        self.assertTrue(m["structured"])
+        self.assertIsNone(m["fit_score"])
+
+    def test_requirements_drive_the_score_not_the_llm(self):
+        # 같은 requirements 에 LLM 이 어떤 score 를 붙여도 결과가 같아야 한다.
+        a = self._match({"requirements": [req()], "summary": "ok"})
+        b = self._match({"requirements": [req()], "summary": "ok", "score": 3})
+        self.assertEqual(a["score"], b["score"])
+        self.assertTrue(a["structured"])
+        self.assertIsNotNone(a["fit_score"])
+        self.assertIsNotNone(a["recommendation"])
 
     def test_blockers_and_demoted_counts_ride_along(self):
-        m = self._match({"score": 70, "requirements": [
+        m = self._match({"requirements": [
             req(), req(requirement="근거없음", candidate_evidence="")],
-            "hard_blockers": [{"kind": "license", "detail": "필수 자격증 미보유"}]})
+            "hard_blockers": [{"kind": "license", "detail": "필수 자격증 미보유",
+                               "evidence": "자격요건에 명시"}]})
         self.assertEqual(m["demoted"], 1)
         self.assertEqual(len(m["hard_blockers"]), 1)
+        self.assertEqual(m["recommendation"], "SKIP")  # 결격은 점수보다 우선
 
 
 class ExtractJsonTest(unittest.TestCase):

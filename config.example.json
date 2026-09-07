@@ -65,6 +65,8 @@
       "원격",
       "재택"
     ],
+    "_exclude_companies_comment": "이 회사들의 공고는 아예 안 봅니다(회사명 부분일치, 공백·괄호 무시). 채용 집계·파견 업체가 구인광고를 대량 재게시할 때 씁니다. 제목 키워드로는 제목이 제각각이라 다 못 걸러서 회사 단위로 둡니다. 자동 판정은 하지 않으니 직접 적어야 합니다.",
+    "exclude_companies": [],
     "exclude_title_keywords": [
       "프론트엔드",
       "frontend",
@@ -106,7 +108,28 @@
     },
     "career_tolerance_over": 2,
     "rule_threshold": 45,
-    "notify_threshold": 60
+    "_threshold_comment": "문턱이 두 종류입니다. rule_threshold/min_score_in_note/notify_threshold 는 '몇 점부터 보여주고 알릴까'(노출)이고, 아래 fit.thresholds 는 '몇 점이 어떤 추천인가'(판정)입니다. 서로 따라다니지 않으니 한쪽을 옮겨도 다른 쪽은 그대로입니다. 적합도를 산출한 공고는 추천이 노출을 정합니다(강력추천·추천만 알림·🔥·전략 코멘트 대상). notify_threshold 와 notify.telegram.threshold 는 적합도를 못 낸 공고의 폴백 문턱입니다. 감시 대상 기업 공고는 점수가 낮아도 알림에 포함되지만 결격 판정이면 빠집니다.",
+    "notify_threshold": 60,
+    "_fit_comment": "적합도(fit_score) 산식. LLM 이 뽑은 요구사항 매칭을 코드가 계산합니다. weights 는 축별 비중이고, 데이터가 없는 축은 빼고 나머지로 재정규화합니다(없는 축을 0점으로 치지 않습니다). thresholds 는 점수를 추천(STRONG_APPLY/APPLY/REVIEW/ARCHIVE/SKIP)으로 바꾸는 경계이며 '이상' 기준입니다(내림차순이 아니면 실행 로그로 경고합니다). min_required_coverage 는 필수 요구사항 중 판정이 선 비율이 이 값 이하이면, min_required_rows 는 필수 요구사항을 이보다 적게 뽑았으면 추천을 REVIEW 로 눌러 사람이 직접 보게 합니다(공고 본문이 비면 LLM 이 목록 메타데이터만으로 2~3건쯤 뽑고 전부 충족 판정을 내 점수가 높게 나옵니다. 본문이 있는 공고는 8~11건이 나옵니다). career_review_gap/career_skip_gap 은 '공고가 내 경력보다 더 요구하는 연수'로, 각각 REVIEW 강등과 (시니어 명시 공고에 한해) SKIP 기준입니다. 이 블록을 통째로 빼면 아래 기본값으로 돕니다. 평평한 표기인 scoring.fit_weights 도 받습니다(둘 다 있으면 scoring.fit.weights 가 이깁니다). 모르는 축 이름이나 0 가중치는 실행 로그로 경고합니다.",
+    "fit": {
+      "weights": {
+        "required": 0.55,
+        "preferred": 0.15,
+        "career": 0.10,
+        "tech": 0.10,
+        "preference": 0.10
+      },
+      "thresholds": {
+        "strong_apply": 90,
+        "apply": 80,
+        "review": 70,
+        "archive": 60
+      },
+      "min_required_coverage": 0.5,
+      "min_required_rows": 5,
+      "career_review_gap": 2,
+      "career_skip_gap": 3
+    }
   },
   "llm": {
     "_comment": "provider: claude_cli(Claude Code 구독, 키 불필요) | api(ANTHROPIC_API_KEY 필요) | none",

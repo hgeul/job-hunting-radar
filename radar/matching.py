@@ -148,34 +148,12 @@ def _bullets(raw, limit=MAX_BULLETS):
     return out
 
 
-VERDICTS = ("강력추천", "추천", "보통", "낮음")
-
-
-def _score(value):
-    """LLM 이 준 0~100 점수 → float 또는 None. 숫자가 아니거나 범위 밖이면 None.
-
-    None 이면 호출부가 규칙 점수로 폴백한다. LLM 이 `score` 키를 빠뜨리거나 문자열로
-    줘도 실행이 죽으면 안 된다(Phase 5 완료조건).
-    """
-    if isinstance(value, bool) or value is None:
-        return None
-    try:
-        n = float(value)
-    except (TypeError, ValueError):
-        return None
-    if n != n or n < 0 or n > 100:  # NaN 포함
-        return None
-    # 스키마가 정수를 요구하므로 정수는 정수로 돌려준다. float 로 승격하면
-    # 노트·대시보드 표기가 "88점"에서 "88.0점"으로 바뀐다.
-    return int(n) if n == int(n) else round(n, 1)
-
-
 def empty():
     """빈 구조화 블록. 매번 새 리스트를 만든다(호출부가 append 해도 오염 없게)."""
     return {
         "requirements": [], "hard_blockers": [], "strengths": [], "risks": [],
         "summary": "", "structured": False, "truncated": False, "demoted": 0,
-        "score": None, "verdict": None, "deadline": None, "strategy": [],
+        "deadline": None, "strategy": [],
     }
 
 
@@ -184,7 +162,7 @@ def normalize_structured(llm_out):
 
     schema_hint 의 **모든** 필드가 이 함수 한 곳을 지난다. 일부만 정규화하고
     나머지를 날것으로 꺼내 쓰면 "LLM 출력은 신뢰할 수 없는 입력"이라는 전제가
-    반쪽이 된다(예: `llm_out["score"]` 직접 인덱싱은 키 하나 빠지면 실행을 죽인다).
+    반쪽이 된다(키 하나 빠진 응답이 실행을 죽이면 안 된다).
 
     `structured` 는 "요구사항 매칭을 실제로 받아왔는가"다. 구식 응답(reasons/gaps만
     있는 응답)이나 파싱 실패는 False 로 남고, 호출부가 기존 폴백 경로를 탄다.
@@ -226,20 +204,8 @@ def normalize_structured(llm_out):
     out["summary"] = _text(llm_out.get("summary") or llm_out.get("one_liner"))
     out["structured"] = bool(out["requirements"])
 
-    out["score"] = _score(llm_out.get("score"))
-    verdict = _text(llm_out.get("verdict"))
-    out["verdict"] = verdict if verdict in VERDICTS else None
+    # score·verdict 는 Phase 6 에서 프롬프트에서 뺐다. 점수와 판정은 `radar/fit.py`
+    # 가 만든다. 옛 응답에 남아 있어도 읽지 않는다.
     out["deadline"] = _text(llm_out.get("deadline")) or None
     out["strategy"] = _bullets(llm_out.get("strategy"), limit=6)
     return out
-
-
-def requirement_counts(requirements):
-    """중요도 x 매칭 교차 집계. Phase 6 점수와 Phase 7 표시가 공통으로 쓴다."""
-    counts = {imp: {mt: 0 for mt in MATCHES} for imp in IMPORTANCES}
-    for r in requirements or []:
-        imp = r.get("importance")
-        mt = r.get("match")
-        if imp in counts and mt in counts[imp]:
-            counts[imp][mt] += 1
-    return counts
