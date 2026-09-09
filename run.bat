@@ -27,8 +27,12 @@ if "%ARGS%"=="" (
 echo.
 echo [run] options: !ARGS!
 echo.
-"%PY%" job_watcher.py --config config.json !ARGS!
-"%PY%" job_watcher.py --config config.other.json !ARGS!
+REM Personal inputs (profile/config/targets/state) live in the private career vault.
+REM Keep this project free of personal data.
+set "CFG=C:\Users\chg92\Documents\Obsidian-Vault\2-Areas\career\radar"
+
+"%PY%" job_watcher.py --config "%CFG%\config.json" !ARGS!
+"%PY%" job_watcher.py --config "%CFG%\config.other.json" !ARGS!
 
 REM Keep the window open only for double-click (no args). Scheduler just exits.
 if "%~1"=="" pause
