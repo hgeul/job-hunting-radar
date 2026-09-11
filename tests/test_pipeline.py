@@ -306,6 +306,22 @@ class TestDeferred(unittest.TestCase):
                 self.assertGreaterEqual(m["score"], cfg["scoring"]["notify_threshold"])
                 self.assertFalse(notify_eligible(m, cfg["scoring"]["notify_threshold"]))
 
+    def test_llm_failure_is_deferred_too(self):
+        # 실측(2026-09-11): 메모리 부족으로 호출 40건이 죽자 전부 규칙 점수로 폴백돼
+        # 알림으로 나갔다. 실패는 평가가 아니다. 예산 초과와 같이 미룬다.
+        from radar.models import notify_eligible
+        items = [make_item(id=f"i{n}", title="Java Spring 백엔드") for n in range(3)]
+        details = {f"i{n}": rich(days_ago(1)) for n in range(3)}
+        deps = FakeDeps(items, details, llm={"i0": RuntimeError("CLI 죽음")})
+        res = pipeline.run(make_config(), {}, "P", window=3, deps=deps)
+        failed = [m for m in res.matches if m["id"] == "i0"][0]
+        self.assertTrue(failed["deferred"])
+        self.assertFalse(notify_eligible(failed, 60))
+        self.assertEqual(res.stats["llm_failed"], 1)
+        self.assertEqual(res.stats["deferred"], 1)
+        ok = [m for m in res.matches if m["id"] != "i0"]
+        self.assertFalse(any(m.get("deferred") for m in ok))
+
     def test_no_llm_run_is_not_deferred(self):
         # LLM 이 아예 꺼진 실행은 규칙 점수가 최선이다. 미루지 않는다.
         res, _ = self._run(budget=2, engine=(None, "--no-llm"))

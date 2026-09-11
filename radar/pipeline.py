@@ -99,7 +99,7 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
         "target_near_misses": {}, "targets_error": registry_error,
         "target_role_dropped": 0, "target_role_dropped_samples": [],
         "company_excluded": 0, "company_excluded_samples": [],
-        "deferred": 0,
+        "deferred": 0, "llm_failed": 0,
     }
 
     # 두 레이더가 각자 후보를 고르고, 같은 공고를 둘 다 잡으면 하나로 합친다
@@ -247,13 +247,22 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
         jd_source = ("원본크롤" if rid in enriched
                      else ("thin" if is_thin else "platform"))
         llm_out = None
+        failed = False
         try:
             llm_out = deps.llm_score(
                 engine, cfg["llm"]["max_output_tokens"], profile_text, it, jd)
             stats["llm_scored"] += 1
         except Exception as e:  # noqa: BLE001
+            failed = True
+            stats["llm_failed"] += 1
             log(f"  ! LLM 실패({rid[:8]}): {e}")
         m = build_match(it, rsc, detail, age, llm_out, jd_source, company, cfg)
+        if failed:
+            # 호출 실패도 예산 초과와 같이 다룬다: 검증할 수 있었는데 못 한 공고를
+            # 규칙 점수만으로 밀어내지 않고, notified 도 안 찍어 다음 실행에서 재시도.
+            # 실측(2026-09-11): 메모리 부족으로 호출 40건이 죽자 전부 규칙 점수(80)로
+            # 폴백돼 알림으로 나갔다. 실패는 평가가 아니다.
+            m["deferred"] = True
         # 구조화 매칭을 실제로 받아온 건수. LLM 이 응답은 했는데 requirements 가
         # 비면 여기서 차이가 드러난다(프롬프트·토큰 예산 회귀 감지용).
         if m.get("structured"):
@@ -292,6 +301,10 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
         stats["deferred"] = len(rest)
         log(f"  · LLM 예산({llm_budget}건) 초과로 {len(rest)}건 미평가. "
             f"알리지 않고 다음 실행에서 평가합니다.")
+    if stats["llm_failed"]:
+        stats["deferred"] += stats["llm_failed"]
+        log(f"  ! LLM 호출 실패 {stats['llm_failed']}건도 미평가로 미룹니다"
+            f"(규칙 점수만으로 알리지 않음). 다음 실행에서 재시도합니다.")
 
     matches.sort(key=lambda m: m["score"], reverse=True)
     return RunResult(matches, seen, stats, source_results,
