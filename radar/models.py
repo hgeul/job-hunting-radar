@@ -26,6 +26,9 @@ def notify_eligible(m, threshold):
     "hard blocker 는 score 보다 우선한다"가 판정 필드 안에서만 참이면 의미가 없다.
     노트에는 계속 싣는다(그런 공고가 있었다는 사실 자체는 알아야 한다).
     """
+    if m.get("deferred"):
+        # LLM 예산 초과로 아직 평가 안 된 공고. 규칙 점수만으로 밀어내지 않는다.
+        return False
     rec = m.get("recommendation")
     if rec is not None:
         # 판정이 있으면 판정이 정한다. 점수 문턱은 판정을 못 낸 공고(적합도 미산출)의

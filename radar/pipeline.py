@@ -99,6 +99,7 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
         "target_near_misses": {}, "targets_error": registry_error,
         "target_role_dropped": 0, "target_role_dropped_samples": [],
         "company_excluded": 0, "company_excluded_samples": [],
+        "deferred": 0,
     }
 
     # 두 레이더가 각자 후보를 고르고, 같은 공고를 둘 다 잡으면 하나로 합친다
@@ -274,10 +275,23 @@ def run(cfg, seen, profile_text, window, no_llm=False, seed=False,
             + (f" · 결격 후보 있는 공고 {stats['llm_blockers']}건"
                if stats["llm_blockers"] else ""))
 
-    # 예산 초과분: 규칙 점수만
+    # 예산 초과분. LLM 이 켜져 있는데 예산이 모자라 못 본 공고는 **미평가**로 미룬다:
+    # 알리지 않고 notified 도 찍지 않아 다음 실행에서 평가받게 한다.
+    # 실측(2026-09-11): 5일치를 한 번에 돌리자 초과분 35건이 규칙 점수(80)만으로
+    # 전부 알림으로 나갔고, 정작 LLM 을 거친 38건은 추천 0건이라 하나도 안 나갔다.
+    # 검증 안 된 쪽이 밀리고 검증된 쪽이 묻히는 거꾸로 된 결과다. 게다가 노트에
+    # 실리면서 notified 가 찍혀 영영 평가를 못 받게 된다.
+    # LLM 이 아예 꺼진 실행(--no-llm 등)은 규칙 점수가 최선이므로 그대로 둔다.
+    deferred = engine is not None
     for it, rsc, detail, age, company in rest:
-        matches.append(build_match(it, rsc, detail, age, None,
-                                   "platform" if detail else None, company, cfg))
+        m = build_match(it, rsc, detail, age, None,
+                        "platform" if detail else None, company, cfg)
+        m["deferred"] = deferred
+        matches.append(m)
+    if deferred and rest:
+        stats["deferred"] = len(rest)
+        log(f"  · LLM 예산({llm_budget}건) 초과로 {len(rest)}건 미평가. "
+            f"알리지 않고 다음 실행에서 평가합니다.")
 
     matches.sort(key=lambda m: m["score"], reverse=True)
     return RunResult(matches, seen, stats, source_results,

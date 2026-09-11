@@ -272,3 +272,55 @@ class TestOrdering(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDeferred(unittest.TestCase):
+    """LLM 예산 초과분은 미평가로 미룬다.
+
+    실측(2026-09-11): 5일치를 한 번에 돌리자 초과분 35건이 규칙 점수만으로 전부
+    알림으로 나갔고 notified 까지 찍혀 영영 평가를 못 받게 됐다.
+    """
+
+    def _run(self, budget, engine=("fake", None)):
+        items = [make_item(id=f"i{n}", title="Java Spring 백엔드") for n in range(5)]
+        details = {f"i{n}": rich(days_ago(1)) for n in range(5)}
+        cfg = make_config()
+        cfg["llm"]["max_calls_per_run"] = budget
+        return pipeline.run(cfg, {}, "P", window=3,
+                            deps=FakeDeps(items, details, engine=engine)), cfg
+
+    def test_overflow_is_marked_deferred(self):
+        res, _ = self._run(budget=2)
+        deferred = [m for m in res.matches if m.get("deferred")]
+        self.assertEqual(len(deferred), 3)
+        self.assertEqual(res.stats["deferred"], 3)
+        for m in deferred:
+            self.assertIsNone(m["fit_score"])  # 규칙 점수만 있다
+
+    def test_deferred_is_not_notify_eligible(self):
+        from radar.models import notify_eligible
+        res, cfg = self._run(budget=2)
+        for m in res.matches:
+            if m.get("deferred"):
+                # 규칙 점수가 문턱을 넘어도 밀어내지 않는다.
+                self.assertGreaterEqual(m["score"], cfg["scoring"]["notify_threshold"])
+                self.assertFalse(notify_eligible(m, cfg["scoring"]["notify_threshold"]))
+
+    def test_no_llm_run_is_not_deferred(self):
+        # LLM 이 아예 꺼진 실행은 규칙 점수가 최선이다. 미루지 않는다.
+        res, _ = self._run(budget=2, engine=(None, "--no-llm"))
+        self.assertFalse(any(m.get("deferred") for m in res.matches))
+        self.assertEqual(res.stats["deferred"], 0)
+
+    def test_note_excludes_deferred_but_counts_them(self):
+        import os
+        import tempfile
+
+        from radar import settings
+        from radar.output.note import write_note
+        res, cfg = self._run(budget=2)
+        cfg["output"]["matches_dir"] = os.path.relpath(tempfile.mkdtemp(), settings.HERE)
+        path, n = write_note(cfg, res.matches, res.stats)
+        text = open(path, encoding="utf-8").read()
+        self.assertEqual(n, 2)
+        self.assertIn("3건은 아직 평가하지 않았습니다", text)

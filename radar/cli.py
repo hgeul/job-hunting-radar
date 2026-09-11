@@ -272,6 +272,8 @@ def main(argv=None):
     # 놓치면 Target Radar를 만든 이유가 없어진다.
     minsc = cfg["output"]["min_score_in_note"]
     for m in matches:
+        if m.get("deferred"):
+            continue  # 미평가. 다음 실행에서 LLM 을 거친 뒤 notified 처리한다.
         if m["score"] >= minsc or m.get("target"):
             rec = seen[m["id"]]
             rec["notified"] = True

@@ -31,7 +31,11 @@ def write_note(cfg, matches, stats):
 
     # target 공고는 점수 문턱을 건너뛴다(cli의 notified 기준과 반드시 같아야 한다.
     # 어긋나면 notified 처리됐는데 노트에 안 실려 영영 못 보는 공고가 생긴다).
-    shown = [m for m in matches if m["score"] >= minsc or m.get("target")]
+    # 미평가(LLM 예산 초과)는 싣지 않는다. 노트 수록은 cli 의 notified 처리와 짝이라,
+    # 여기 실으면 평가도 못 받은 채 "봤다"로 찍힌다. 건수만 헤더에 알린다.
+    deferred_n = sum(1 for m in matches if m.get("deferred"))
+    shown = [m for m in matches
+             if not m.get("deferred") and (m["score"] >= minsc or m.get("target"))]
     # target 우선 → 추천 순위 → 점수순. 추천을 정렬에 넣지 않으면 결격으로 제외된
     # 공고가 점수만 높아 맨 위에 앉는다(점수는 결격을 모른다).
     shown.sort(key=lambda m: (0 if m.get("target") else 1, rec_rank(m), -m["score"]))
@@ -76,6 +80,10 @@ def write_note(cfg, matches, stats):
     if stats.get("llm_note"):
         lines.append(f">")
         lines.append(f"> ⚠️ LLM 단계 생략: {stats['llm_note']} (규칙 점수만 표시)")
+    if deferred_n:
+        lines.append(f">")
+        lines.append(f"> ⏳ LLM 예산 초과로 {deferred_n}건은 아직 평가하지 않았습니다. "
+                     f"다음 실행에서 평가합니다(신규 윈도우 안에 있는 동안).")
     if stats.get("targets_error"):
         lines.append(f">")
         lines.append(f"> ⚠️ **감시 대상 기업 목록을 못 읽었습니다**: "

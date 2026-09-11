@@ -32,8 +32,9 @@ def send_telegram(cfg, matches, stats=None, note_path=None):
     # 없는데 텔레그램으로는 나가는 어긋남이 생긴다.
     # 감시 대상 기업은 점수가 낮아도 보낸다(그게 감시하는 이유다). 다만 결격은 뺀다.
     hits = [m for m in matches
-            if notify_eligible(m, threshold)
-            or (m.get("target") and m.get("recommendation") != "SKIP")]
+            if not m.get("deferred")
+            and (notify_eligible(m, threshold)
+                 or (m.get("target") and m.get("recommendation") != "SKIP"))]
     if not hits:
         log(f"  · 텔레그램 skip: ≥{threshold}점 신규 없음")
         return
